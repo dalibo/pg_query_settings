@@ -74,6 +74,14 @@ CREATE TABLE
 INSERT 0 10000000
 ```
 
+In order to retrieve the query id, you'll probably need to enable the
+`compute_query_id` parameter in the same session :
+
+```
+🐘 on postgres@r14 =# SET compute_query_id TO on;
+SET
+```                                                                   
+
 We run a query that generates a sort :
 
 ```
