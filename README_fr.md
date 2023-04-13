@@ -7,13 +7,9 @@ paramètres, comme le `work_mem`, à la volée pour certaines requêtes.
 Prérequis
 ----------
 
-Pour compiler ce module, nous avons besoin de la bibliothèque libpq (.so),
-des bibliothèques libpgcommon et libpgfeuils (.a), des fichiers d'en-tête
-PostgreSQL 14+ et de l'outil `pg_config`. Les fichiers d'en-tête et cet outil
-sont généralement disponibles dans un paquet -dev.
-
-Pour utiliser ce module une fois compilé, nous n'avons besoin que de la
-bibliothèque libpq. Toute version devrait aller.
+Pour compiler ce module, nous avons besoin des fichiers d'en-tête de PostgreSQL
+14+ et de l'outil `pg_config`. Les fichiers d'en-tête et cet outil sont
+généralement disponibles dans un paquet -dev.
 
 Compilation
 -----------
@@ -42,10 +38,10 @@ LOAD 'pg_query_settings';
 
 soit avec les paramètres habituels (`shared_preload_libraries` par exemple).
 
-La bibliothèque va lire la table `pgqs_config` à la recherche du queryid
-de la requête.
-Pour chaque ligne de `pgqs_config` ayant ce queryid, la deuxième colonne indique
-le nom du paramètre et la troisième colonne la valeur de ce paramètre.
+À chaque exécution de requête, la bibliothèque va lire la table `pgqs_config` à
+la recherche du queryid de la requête. Pour chaque ligne de `pgqs_config` ayant
+ce queryid, la deuxième colonne indique le nom du paramètre et la troisième
+colonne la valeur de ce paramètre.
 
 La table `config` se remplit avec des requêtes standards (`INSERT`, `UPDATE`,
 `DELETE`).
@@ -54,12 +50,12 @@ L'exécution de la fonction de la bibliothèque est automatique une fois qu'elle
 est chargée.
 
 Il est possible de désactiver l'extension avec le paramètre
-`pg_query_settings.enable`.
+`pg_query_settings.enabled`.
 
 Plus d'informations sur pg_query_settings
 -----------------------------------------
 
-Ccréation de l'extension :
+Création de l'extension :
 
 ```
 🐘 on postgres@r14 =# CREATE EXTENSION pg_query_settings;
@@ -128,7 +124,7 @@ Time: 0.624 ms
 Time: 55006.149 ms (00:55.006)
 ```
 
-et on voit bien que le tri est cette fois réalisé en mémoire même si la durée
+On voit bien que le tri est cette fois réalisé en mémoire même si la durée
 est sensiblement la même.
 
 On revient à la configuration par défaut (4 Mo) :
@@ -139,7 +135,8 @@ RESET
 Time: 0.527 ms
 ```
 
-On insère la configuration à appliquer dans la table `pgqs_config` :
+On insère la configuration à appliquer dans la table `pgqs_config` en récupérant
+le `queryid` sur le plan d'exécution (ligne `Query Identifier`) :
 
 ```
 🐘 on postgres@r14 =# INSERT INTO pgqs_config VALUES (2507635424379213761, 'work_mem', '1000000000');
@@ -170,10 +167,10 @@ On rejoue la requête... :
 Time: 53111.479 ms (00:53.111)
 ```
 
-mais on ne voit pas notre configuration appliquée...
-normal, on n'a pas chargé la lib' !
+On ne voit pas notre configuration appliquée...  normal, on n'a pas chargé la
+bibliothèque !
 
-On charge la lib' :
+On charge la bibliothèque :
 
 ```
 🐘 on postgres@r14 =# LOAD 'pg_query_settings';
@@ -206,4 +203,7 @@ WARNING:  value is 1000000000
 Time: 54616.922 ms (00:54.617)
 ```
 
-et cette fois, la configuration spécifique est appliquée \o/ .
+Cette fois, la configuration spécifique est bien appliquée. Pour que cela soit
+appliqué en permanence, il convient de charger la bibliothèque dès le démarrage
+de PostgreSQL grâce au paramètre `shared_preload_libraries`.
+

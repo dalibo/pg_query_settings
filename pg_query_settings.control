@@ -1,7 +1,6 @@
 # pg_query_settings extension
-comment = 'module that dynamically set queries parameters based on their queryid'
+comment = 'Dynamically set queries GUCs based on their queryid'
 default_version = '0.1'
 module_pathname = '$libdir/pg_query_settings'
 relocatable = true
 trusted = true
-

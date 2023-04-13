@@ -1,5 +1,7 @@
+INSTALL instructions
+
 ```
-git clone XXX
+git clone https://github.com/dalibo/pg_query_settings.git
 cd pg_query_settings
 make
 sudo make install
@@ -14,3 +16,5 @@ For example :
 PG_CONFIG=/usr/lib/postgresql/14/bin/pg_config
 export PG_CONFIG
 ```
+
+or you can simply set your PATH correctly :)
