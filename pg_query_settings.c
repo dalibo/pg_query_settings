@@ -36,19 +36,22 @@ void _PG_fini(void);
 
 /* Variables */
 
-static bool    enable = true;
+static bool    enabled = true;
 static bool    debug = false;
 static slist_head paramResetList = SLIST_STATIC_INIT(paramResetList);
 
+/* Constants */
 /* Name of our config table */
 static const char* pgqs_config ="pgqs_config";
 
+/* Parameter struct */
 typedef struct parameter
 {
   char *name;
   slist_node node;
 } parameter;
 
+/* Our hooks on PostgreSQL */
 static planner_hook_type prevHook  = NULL;
 static ExecutorEnd_hook_type prev_ExecutorEnd = NULL;
 
@@ -71,7 +74,7 @@ static void DestroyPRList(bool reset)
 
     if (reset)
     {
-      if (debug) elog(DEBUG1, "reset guc %s", param->name);
+      if (debug) elog(DEBUG1, "Reset guc %s", param->name);
 
       SetConfigOption(param->name, NULL, PGC_USERSET, PGC_S_SESSION);
     }
@@ -81,52 +84,58 @@ static void DestroyPRList(bool reset)
 }
 
 /*
- * We scan our 'pgqs_config' table, and for each matching tuple, we call SetConfigOption()
- * to set the runtime parameter.
- * We also build a list of these parameters so that we can restore them to their default
- * values afterwards.
+ * planner hook function: this is where we set all our GUC if we find a
+ * configuration for the query
+ *
+ * The function scans our 'pgqs_config' table, and for each matching tuple, we
+ * call SetConfigOption() to set the runtime parameter.
+ * We also build a list of these parameters so that we can restore them to their
+ * default values afterwards.
  */
 static PlannedStmt *
 execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListInfo boundp)
 {
-  PlannedStmt *result;
-  Relation  rel;
-  HeapTuple  tuple;
-  Oid    relid;
-  TableScanDesc  scan;
-  Datum data;
-  bool isnull;
-  bool rethrow = false;
-  int64 id;
-  char *value = NULL;
-  char *guc_name = NULL;
-  parameter *param = NULL;
+  PlannedStmt    *result;
+  Relation       config_rel;
+  HeapTuple      config_tuple;
+  Oid            config_relid;
+  TableScanDesc  config_scan;
+  Datum          data;
+  bool           isnull;
+  bool           rethrow = false;
+  int64          id;
+  char           *guc_value = NULL;
+  char           *guc_name = NULL;
+  parameter      *param = NULL;
 
-  if (enable)
+  if (enabled)
   {
-    if (debug) elog(DEBUG1, "queryid is '%li'", (int64)(parse->queryId));
+    if (debug) elog(DEBUG1, "query's queryid is '%li'", (int64)(parse->queryId));
 
-    relid = RelnameGetRelid(pgqs_config);
-    rel = table_open(relid, AccessShareLock);
+    config_relid = RelnameGetRelid(pgqs_config);
+    config_rel = table_open(config_relid, AccessShareLock);
 
-    scan = table_beginscan(rel, GetActiveSnapshot(), 0, NULL);
+    config_scan = table_beginscan(config_rel, GetActiveSnapshot(), 0, NULL);
 
-    while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL)
+    while ((config_tuple = heap_getnext(config_scan, ForwardScanDirection)) != NULL)
     {
       /* Get the queryid in the currently read tuple. */
-      data = heap_getattr(tuple, 1, rel->rd_att, &isnull);
+      data = heap_getattr(config_tuple, 1, config_rel->rd_att, &isnull);
       id = DatumGetInt64(data);
+      if (debug) elog(DEBUG1, "config queryid is %li", id);
+
       /* Compare the queryid previously obtained with the queryid
        * of the current query. */
       if (parse->queryId == id)
       {
         /* Get the name of the parameter (table field : 'param'). */
-        data = heap_getattr(tuple, 2, rel->rd_att, &isnull);
+        data = heap_getattr(config_tuple, 2, config_rel->rd_att, &isnull);
         guc_name = pstrdup(TextDatumGetCString(data));
 
         /* Get the value for the parameter (table field : 'value'). */
-        data = heap_getattr(tuple, 3, rel->rd_att, &isnull);
-        value = pstrdup(TextDatumGetCString(data));
+        data = heap_getattr(config_tuple, 3, config_rel->rd_att, &isnull);
+        /* FIXME should we add a test on isnull? */
+        guc_value = pstrdup(TextDatumGetCString(data));
 
         param = malloc(sizeof(parameter));
         param->name = guc_name;
@@ -144,7 +153,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
          */
         PG_TRY();
         {
-          SetConfigOption(guc_name, value, PGC_USERSET, PGC_S_SESSION);
+          SetConfigOption(guc_name, guc_value, PGC_USERSET, PGC_S_SESSION);
         }
         PG_CATCH();
         {
@@ -159,16 +168,12 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
         }
         PG_END_TRY();
       }
-      else
-      {
-        if (debug) elog(DEBUG1, "queryid is %li", id);
-      }
 
   }
 
 close:
-    table_endscan(scan);
-    table_close(rel, AccessShareLock);
+    table_endscan(config_scan);
+    table_close(config_rel, AccessShareLock);
     if (rethrow)
     {
       PG_RE_THROW();
@@ -179,19 +184,17 @@ close:
    * Call next hook if it exists
    */
   if (prevHook)
-  {
-    if (debug) elog(DEBUG1, "prev hook");
     result = prevHook(parse, query_st, cursorOptions, boundp);
-  }
   else
-  {
-    if (debug) elog(DEBUG1, "standard planner");
     result = standard_planner(parse, query_st, cursorOptions, boundp);
-  }
 
   return result;
 }
 
+/*
+ * executor hook function: this is where we reset all our GUC for a specific
+ * query
+ */
 static void
 PlanTuner_ExecutorEnd(QueryDesc *q)
 {
@@ -203,16 +206,19 @@ PlanTuner_ExecutorEnd(QueryDesc *q)
     standard_ExecutorEnd(q);
 }
 
+/*
+ * Initialize our library to set hooks and define our GUCs
+ */
 void
 _PG_init(void)
 {
-  /* Create a GUC variable named pg_query_settings.enable
+  /* Create a GUC variable named pg_query_settings.enabled
    * used to enable or disable this module. */
   DefineCustomBoolVariable(
-      "pg_query_settings.enable",
+      "pg_query_settings.enabled",
       "Disable pg_query_settings module",
       "Disable pg_query_settings module",
-      &enable,
+      &enabled,
       true,
       PGC_USERSET,
       GUC_EXPLAIN,
@@ -236,6 +242,7 @@ _PG_init(void)
       NULL
       );
 
+  /* Set our two hooks */
   if (planner_hook != execPlantuner)
   {
     prevHook = planner_hook;
@@ -249,7 +256,10 @@ _PG_init(void)
   }
 }
 
-  void
+/*
+ * Reset hooks
+ */
+void
 _PG_fini(void)
 {
   planner_hook = prevHook;
