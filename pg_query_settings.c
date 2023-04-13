@@ -104,7 +104,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 
   if (enable)
   {
-    if (debug) elog(DEBUG1, "queryid is '%li'", (int64)(parse->queryId));
+    if (debug) elog(DEBUG1, "internal queryid is '%li'", (int64)(parse->queryId));
 
     relid = RelnameGetRelid(pgqs_config);
     rel = table_open(relid, AccessShareLock);
@@ -161,7 +161,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       }
       else
       {
-        if (debug) elog(DEBUG1, "queryid is %li", id);
+        if (debug) elog(DEBUG1, "current queryid read is %li", id);
       }
 
   }
@@ -206,6 +206,26 @@ PlanTuner_ExecutorEnd(QueryDesc *q)
 void
 _PG_init(void)
 {
+
+/* queryId not set under v14 */
+#if PG_VERSION_NUM < 140000
+/* we must get the queryId from pg_stat_statements */
+const char *shared_preload_libraries_config;
+char *pg_stat_statements;
+
+shared_preload_libraries_config = GetConfigOption("shared_preload_libraries", true, false);
+pg_stat_statements = strstr(shared_preload_libraries_config, "pg_stat_statements");
+
+if (pg_stat_statements == NULL)
+{
+	ereport(WARNING, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),errmsg("pg_stat_statements not loaded, queryId not set")));
+
+	enable = false;
+}
+
+#endif
+
+
   /* Create a GUC variable named pg_query_settings.enable
    * used to enable or disable this module. */
   DefineCustomBoolVariable(
