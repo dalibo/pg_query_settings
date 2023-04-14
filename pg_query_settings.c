@@ -36,7 +36,7 @@ void _PG_fini(void);
 
 /* Variables */
 
-static bool    enabled = true;
+static bool    pgqs_enabled = true;
 static bool    debug = false;
 static slist_head paramResetList = SLIST_STATIC_INIT(paramResetList);
 
@@ -108,7 +108,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
   char           *guc_name = NULL;
   parameter      *param = NULL;
 
-  if (enabled)
+  if (pgqs_enabled)
   {
     if (debug) elog(DEBUG1, "query's queryid is '%li'", (int64)(parse->queryId));
 
@@ -218,7 +218,7 @@ _PG_init(void)
       "pg_query_settings.enabled",
       "Disable pg_query_settings module",
       "Disable pg_query_settings module",
-      &enabled,
+      &pgqs_enabled,
       true,
       PGC_USERSET,
       GUC_EXPLAIN,
