@@ -1,8 +1,10 @@
-MODULE_big = pg_query_settings
-OBJS = pg_query_settings.o pgsp_normalize.o
 #pgsp_json_text.o
 EXTENSION = pg_query_settings
-DATA = pg_query_settings--0.1.sql
+EXTENSION_VERSION=$(shell grep default_version $(EXTENSION).control | sed -e "s/default_version[[:space:]]*=[[:space:]]*'\([^']*\)'/\1/")
+DATA = $(EXTENSION)--$(EXTENSION_VERSION).sql
+
+MODULE_big = pg_query_settings
+OBJS = pg_query_settings.o pgsp_normalize.o
 
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
