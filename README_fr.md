@@ -74,6 +74,14 @@ INSERT 0 10000000
 Time: 21240.040 ms (00:21.240)
 ```
 
+Afin de récupérer l'identifiant d'une requête, il sera probablement nécessaire
+d'activer dans la session le paramètre `compute_query_id` :
+
+```
+🐘 on postgres@r14 =# SET compute_query_id TO on;
+SET
+```
+
 Exécution d'une requête qui génère un tri :
 
 ```
