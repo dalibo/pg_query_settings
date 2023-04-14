@@ -25,8 +25,13 @@
 #include <optimizer/optimizer.h>
 #include <lib/ilist.h>
 
-/* This is a module :) */
+/* Parallel workers */
+#if PG_VERSION_NUM >= 90600
+#include "access/parallel.h"
+#endif
 
+
+/* This is a module :) */
 PG_MODULE_MAGIC;
 
 /* Function definitions */
@@ -43,6 +48,10 @@ static slist_head paramResetList = SLIST_STATIC_INIT(paramResetList);
 /* Name of our config table */
 static const char* pgqs_config ="pgqs_config";
 
+/* Current nesting depth of ExecutorRun calls */
+static int	pgqs_nesting_level = 0;
+
+
 typedef struct parameter
 {
   char *name;
@@ -52,7 +61,16 @@ typedef struct parameter
 static planner_hook_type prevHook  = NULL;
 static ExecutorEnd_hook_type prev_ExecutorEnd = NULL;
 
+
+static ExecutorStart_hook_type prev_ExecutorStart = NULL;
+static ExecutorRun_hook_type prev_ExecutorRun = NULL;
+static ExecutorFinish_hook_type prev_ExecutorFinish = NULL;
+
+
+
 /* Functions */
+
+static void pgqs_ExecutorStart(QueryDesc *queryDesc, int eflags);
 
 /*
  * Destroy the list of parameters.
@@ -203,11 +221,93 @@ PlanTuner_ExecutorEnd(QueryDesc *q)
     standard_ExecutorEnd(q);
 }
 
+
+static void
+pgqs_ExecutorStart(QueryDesc *queryDesc, int eflags)
+{
+  elog(DEBUG5, "pg_query_settings: pgqs_ExecutorStart: entry");
+
+}
+
+
+static void
+pgqs_ExecutorRun(QueryDesc *queryDesc,
+				 ScanDirection direction,
+#if PG_VERSION_NUM >= 90600
+				 uint64 count
+#else
+				 long count
+#endif
+#if PG_VERSION_NUM >= 100000
+				 ,bool execute_once
+#endif
+)
+{
+
+  elog(DEBUG5, "pg_query_settings: pgqs_ExecutorRun: entry");
+	pgqs_nesting_level++;
+	ereport(DEBUG5, (errmsg("pg_query_settings: pgqs_ExecutorRun: nesting_level=%d", pgqs_nesting_level)));
+	PG_TRY();
+	{
+		if (prev_ExecutorRun)
+#if PG_VERSION_NUM >= 100000
+			prev_ExecutorRun(queryDesc, direction, count, execute_once);
+#else
+			prev_ExecutorRun(queryDesc, direction, count);
+#endif
+		else
+#if PG_VERSION_NUM >= 100000
+			standard_ExecutorRun(queryDesc, direction, count, execute_once);
+#else
+			standard_ExecutorRun(queryDesc, direction, count);
+#endif
+	}
+	PG_CATCH();
+	{
+		pgqs_nesting_level--;
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+	ereport(DEBUG5, (errmsg("pg_query_settings:pgqs_ExecutorRun: nesting_level=%d", pgqs_nesting_level)));
+	elog(DEBUG5, "pgqs_ExecutorRun: exit");
+}
+
+
+static void
+pgqs_ExecutorFinish(QueryDesc *queryDesc)
+{
+  elog(DEBUG5, "pg_query_settings: pgqs_ExecutorFinish: entry");
+	pgqs_nesting_level++;
+	ereport(DEBUG5, (errmsg("pg_query_settings: pgqs_ExecutorFinish: nesting_level=%d", pgqs_nesting_level)));
+
+	PG_TRY();
+	{
+	if (prev_ExecutorFinish)
+			prev_ExecutorFinish(queryDesc);
+	else
+			standard_ExecutorFinish(queryDesc);
+	}
+	PG_CATCH();
+	{
+		pgqs_nesting_level--;
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+	ereport(DEBUG5, (errmsg("pg_query_settings: pgqs_ExecutorFinish: nesting_level=%d", pgqs_nesting_level)));
+	elog(DEBUG5, "pgqs_ExecutorFinish: exit");
+
+}
+
+/* ********* */
+
+
 void
 _PG_init(void)
 {
 
 /* queryId not set under v14 */
+elog(DEBUG5, "pgqs_ExecutorFinish: exit");
+
 #if PG_VERSION_NUM < 140000
 /* we must get the queryId from pg_stat_statements */
 const char *shared_preload_libraries_config;
@@ -267,6 +367,30 @@ if (pg_stat_statements == NULL)
     prev_ExecutorEnd = ExecutorEnd_hook;
     ExecutorEnd_hook = PlanTuner_ExecutorEnd;
   }
+
+/* is pg_query_settings enabled ? */
+  if (enable)
+		ereport(LOG, (errmsg("pg_query_settings:_PG_init(): pg_query_settings is enabled")));
+	else
+		ereport(LOG, (errmsg("pg_query_settings:_PG_init(): pg_query_settings is not enabled")));
+
+
+/* Install hooks only on leader. */
+#if PG_VERSION_NUM >= 90600
+  if (!IsParallelWorker())
+    {
+#endif
+
+    prev_ExecutorStart = ExecutorStart_hook;
+    ExecutorStart_hook = pgqs_ExecutorStart;
+		prev_ExecutorRun = ExecutorRun_hook;
+		ExecutorRun_hook = pgqs_ExecutorRun;
+		prev_ExecutorFinish = ExecutorFinish_hook;
+		ExecutorFinish_hook = pgqs_ExecutorFinish;
+#if PG_VERSION_NUM >= 90600
+  	}
+#endif
+  	elog(DEBUG5, "pg_query_settings:_PG_init():exit");
 }
 
   void
