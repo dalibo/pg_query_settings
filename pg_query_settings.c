@@ -132,7 +132,11 @@ static void DestroyPRList(bool reset)
  * default values afterwards.
  */
 static PlannedStmt *
+#if PG_VERSION_NUM < 130000
+execPlantuner(Query *parse, int cursorOptions, ParamListInfo boundp)
+#else
 execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListInfo boundp)
+#endif
 {
   PlannedStmt    *result;
   Relation       config_rel;
@@ -151,6 +155,8 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
   if (enabled)
   {
 #if COMPUTE_LOCAL_QUERYID
+// FIXME: query_st does not exist in planner_hook < v13
+    const char * query_st = "";
     queryid = hash_query(query_st);
 #else
     queryid = parse->queryId;
@@ -230,9 +236,17 @@ close:
    * Call next hook if it exists
    */
   if (prevHook)
+#if PG_VERSION_NUM < 130000
+  result = prevHook(parse, cursorOptions, boundp);
+#else
     result = prevHook(parse, query_st, cursorOptions, boundp);
+#endif
   else
+#if PG_VERSION_NUM < 130000
+    result = standard_planner(parse, cursorOptions, boundp);
+#else
     result = standard_planner(parse, query_st, cursorOptions, boundp);
+#endif
 
   return result;
 }
