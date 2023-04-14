@@ -5,8 +5,10 @@ DATA = $(EXTENSION)--$(EXTENSION_VERSION).sql
 
 MODULE_big = pg_query_settings
 OBJS = pg_query_settings.o pgsp_normalize.o
-TESTS        = test/sql/0.sql
-REGRESS      = 0
+
+TESTS        = test/sql/base.sql
+REGRESS      = base
+REGRESS_OPTS = --inputdir=test
 
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
