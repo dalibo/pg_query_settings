@@ -43,7 +43,10 @@ PG_MODULE_MAGIC;
 
 void _PG_init(void);
 void _PG_fini(void);
+
+#if PG_VERSION_NUM < 140000
 static uint64 hash_query(const char* query);
+#endif
 
 /* Variables */
 
@@ -73,6 +76,8 @@ static ExecutorEnd_hook_type prev_ExecutorEnd = NULL;
  *
  * Part of pg_store_plans.c in https://github.com/ossc-db/pg_store_plans
  */
+
+ #if PG_VERSION_NUM < 140000
 static uint64
 hash_query(const char* query)
 {
@@ -89,6 +94,7 @@ hash_query(const char* query)
 
     return queryid;
 }
+#endif
 
 /*
  * Destroy the list of parameters.
