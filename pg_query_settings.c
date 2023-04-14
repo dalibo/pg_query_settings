@@ -15,6 +15,7 @@
 #include <postgres.h>
 
 #include <access/heapam.h>
+#include <access/hash.h>
 #include <catalog/namespace.h>
 #include <miscadmin.h>
 #include <executor/executor.h>
@@ -22,17 +23,27 @@
 #include <storage/bufmgr.h>
 #include <utils/builtins.h>
 #include <utils/guc.h>
-#include <optimizer/optimizer.h>
 #include <lib/ilist.h>
+
+#include "pgsp_normalize.h"
 
 /* This is a module :) */
 
 PG_MODULE_MAGIC;
 
+/* Macro definitions */
+
+#if PG_VERSION_NUM < 140000
+#define COMPUTE_LOCAL_QUERYID 1
+#else
+#define COMPUTE_LOCAL_QUERYID 0
+#endif
+
 /* Function definitions */
 
 void _PG_init(void);
 void _PG_fini(void);
+static uint64 hash_query(const char* query);
 
 /* Variables */
 
@@ -56,6 +67,28 @@ static planner_hook_type prevHook  = NULL;
 static ExecutorEnd_hook_type prev_ExecutorEnd = NULL;
 
 /* Functions */
+
+/*
+ * Compute QueryID
+ *
+ * Part of pg_store_plans.c in https://github.com/ossc-db/pg_store_plans
+ */
+static uint64
+hash_query(const char* query)
+{
+    uint64 queryid;
+
+    char *normquery = pstrdup(query);
+    normalize_expr(normquery, false);
+    queryid = hash_any((const unsigned char*)normquery, strlen(normquery));
+    pfree(normquery);
+
+    /* If we are unlucky enough to get a hash of zero, use 1 instead */
+    if (queryid == 0)
+        queryid = 1;
+
+    return queryid;
+}
 
 /*
  * Destroy the list of parameters.
@@ -107,9 +140,17 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
   char           *guc_value = NULL;
   char           *guc_name = NULL;
   parameter      *param = NULL;
+  uint64          queryid = 0;
 
   if (enabled)
   {
+#if COMPUTE_LOCAL_QUERYID
+    queryid = hash_query(query_st);
+#else
+    queryid = parse->queryId;
+#endif
+    if (debug) elog(DEBUG1, "QueryID is '%li'", queryid);
+
     if (debug) elog(DEBUG1, "query's queryid is '%li'", (int64)(parse->queryId));
 
     config_relid = RelnameGetRelid(pgqs_config);
@@ -126,7 +167,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 
       /* Compare the queryid previously obtained with the queryid
        * of the current query. */
-      if (parse->queryId == id)
+      if (queryid == id)
       {
         /* Get the name of the parameter (table field : 'param'). */
         data = heap_getattr(config_tuple, 2, config_rel->rd_att, &isnull);
@@ -168,8 +209,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
         }
         PG_END_TRY();
       }
-
-  }
+    }
 
 close:
     table_endscan(config_scan);
