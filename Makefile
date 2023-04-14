@@ -8,3 +8,10 @@ PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 
+##
+## D O C K E R
+##
+DOCKER_IMAGE?=pgxn/pgxn-tools
+
+docker_bash: #: enter the docker image (useful for testing)
+	docker run -it --rm --volume "`pwd`:/source" --workdir /source --user "$(id -u):$(id -g)" $(DOCKER_IMAGE) bash
