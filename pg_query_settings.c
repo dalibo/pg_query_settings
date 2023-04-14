@@ -77,7 +77,7 @@ static ExecutorEnd_hook_type prev_ExecutorEnd = NULL;
  * Part of pg_store_plans.c in https://github.com/ossc-db/pg_store_plans
  */
 
- #if PG_VERSION_NUM < 140000
+#if PG_VERSION_NUM < 140000
 static uint64
 hash_query(const char* query)
 {
