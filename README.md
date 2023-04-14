@@ -1,23 +1,19 @@
 README
 ======
 
-`pg_query_settings` is a module that dynamically set queries parameters based
+`pg_query_settings` is a module that dynamically set queries' parameters based
 on their queryid.
 
 The original idea was to configure a specific value of the `work_mem` parameter
-for a specific query. Currently, any query parameters also have customizable
-values.
+for a specific query. Currently, all query parameters may have a customizable
+value.
 
 Requirements
 ------------
 
-To compile these tools, you will need the libpq library (.so), the libpgcommon
-and libpgfeutils libraries (.a), the PostgreSQL 14+ header files, and the
+To compile these tools, you will need the PostgreSQL 14+ header files, and the
 `pg_config` tool. The header files and the tool are usually available in a -dev
 package.
-
-To use them once compiled, you only need the libpq library. Any version should
-be fine.
 
 Compilation
 -----------
@@ -45,27 +41,30 @@ LOAD 'pg_query_settings';
 ```
 
 or with the usual parameters (`shared_preload_libraries` for example).
-The library will read the `pgqs_config` table searching for the queryid
-of the query.
-For each `pgqs_config` line with this queryid, the second column indicates the
-parameter name and the third column indicates the parameter value.
-The `pgqs_config` table is populated with standard queries (`INSERT`, `UPDATE`,
-`DELETE`).
-The execution of the library function is automatic once it is loaded.
 
-The extension can be disabled with the `pg_query_settings.enable` parameter.
+For each query executed, the library will read the `pgqs_config` table searching
+for the queryid of the query. For each `pgqs_config` line with this queryid,
+the second column indicates the parameter name and the third column indicates
+the parameter value.
+
+The `pgqs_config` table may be populated with standard DML queries (`INSERT`,
+`UPDATE`, `DELETE`).
+
+The execution of the library function's code is automatic once it is loaded.
+
+The extension can be disabled with the `pg_query_settings.enabled` parameter.
 
 More informations on pg_query_settings
 --------------------------------------
 
-Extension creation :
+Create the extension:
 
 ```
 🐘 on postgres@r14 =# CREATE EXTENSION pg_query_settings;
 CREATE EXTENSION
 ```
 
-Creation and population of a user table :
+Create a user table and add some rows:
 
 ```
 🐘 on postgres@r14 =# CREATE TABLE toto (c1 integer, c2 text);
@@ -82,7 +81,7 @@ In order to retrieve the query id, you'll probably need to enable the
 SET
 ```                                                                   
 
-We run a query that generates a sort :
+We run a query that uses a sort :
 
 ```
 🐘 on postgres@r14 =# EXPLAIN (COSTS OFF, ANALYZE, SETTINGS, VERBOSE) SELECT * FROM toto ORDER BY c2;
@@ -103,9 +102,9 @@ We run a query that generates a sort :
 (10 rows)
 ```
 
-This query sorts on disk because there are not enough `work_mem`.
+This query sorts rows on disk because `work_mem` is not high enough.
 
-We increase `work_mem` for this session :
+We increase `work_mem` for this session:
 
 ```
 🐘 on postgres@r14 =# SET work_mem TO '1GB';
@@ -128,17 +127,17 @@ SET
 (10 rows)
 ```
 
-And we can see that it uses this memory to sort in memory
-even if the duration is roughly the same.
+Now, it uses this memory to sort in memory even if the duration is roughly the same.
 
-We go back to the default configuration (4 MB) :
+We go back to the default configuration (4 MB):
 
 ```
 🐘 on postgres@r14 =# RESET work_mem;
 RESET
 ```
 
-We insert the configuration to apply in the `pgqs_config` table :
+We insert the configuration to apply in the `pgqs_config` table (we get the
+query identifier from the `EXPLAIN output`):
 
 ```
 🐘 on postgres@r14 =# INSERT INTO pgqs_config VALUES (2507635424379213761, 'work_mem', '1000000000');
@@ -166,8 +165,7 @@ We execute the query :
 (10 rows)
 ```
 
-And we don't see our applied configuration...
-That's normal, we haven't loaded the library.
+Our configuration is not applied. That's OK, the library isn't loaded.
 
 We load the library :
 
@@ -176,7 +174,7 @@ We load the library :
 LOAD
 ```
 
-We rexecute the query again :
+We execute the query again:
 
 ```
 🐘 on postgres@r14 =# EXPLAIN (COSTS OFF, ANALYZE, SETTINGS, VERBOSE) SELECT * FROM toto ORDER BY c2;
@@ -199,4 +197,4 @@ WARNING:  value is 1000000000
 (10 rows)
 ```
 
-And this time, the specific configuration is applied \o/ .
+And this time, the specific configuration is applied.
