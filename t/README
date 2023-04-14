@@ -1,0 +1,4 @@
+The PG_REGRESS environement variable must be set.
+
+For example:
+export PG_REGRESS=/usr/lib/postgresql/15/lib/pgxs/src/test/regress/pg_regress
