@@ -1,17 +1,15 @@
-/*-------------------------------------------------------------------------
+/*-------------------------------------------------------------------------------------------------
  *
- * pgsp_json.c: Plan handler for JSON/XML/YAML style plans
+ * pgsp_normalize.c: Normalize a query.
+ *
+ * This is a partial copy of the pg_store_plans/pgsp_json.c file.
  *
  * Copyright (c) 2012-2022, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
  *
- * IDENTIFICATION
- *	  pg_store_plans/pgsp_json.c
- *
- *-------------------------------------------------------------------------
+ *-------------------------------------------------------------------------------------------------
  */
 
 #include "postgres.h"
-#include "miscadmin.h"
 
 #include "nodes/parsenodes.h"
 
@@ -35,7 +33,6 @@ void normalize_expr(char *expr, bool preserve_space);
 		    tok == TRUE_P || tok == FALSE_P || \
 			tok == CURRENT_DATE || tok == CURRENT_TIME || \
 		    tok == LOCALTIME || tok == LOCALTIMESTAMP)
-#define IS_INDENTED_ARRAY(v) ((v) == P_GroupKeys || (v) == P_HashKeys)
 
 /*
  * norm_yylex: core_yylex with replacing some tokens.
