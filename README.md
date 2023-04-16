@@ -60,16 +60,16 @@ More informations on pg_query_settings
 Create the extension:
 
 ```
-🐘 on postgres@r14 =# CREATE EXTENSION pg_query_settings;
+postgres=# CREATE EXTENSION pg_query_settings;
 CREATE EXTENSION
 ```
 
 Create a user table and add some rows:
 
 ```
-🐘 on postgres@r14 =# CREATE TABLE toto (c1 integer, c2 text);
+postgres=# CREATE TABLE toto (c1 integer, c2 text);
 CREATE TABLE
-🐘 on postgres@r14 =# INSERT INTO toto SELECT i, 'Ligne '||i FROM generate_series(1, 10000000) i;
+postgres=# INSERT INTO toto SELECT i, 'Ligne '||i FROM generate_series(1, 10000000) i;
 INSERT 0 10000000
 ```
 
@@ -77,14 +77,14 @@ In order to retrieve the query id, you'll probably need to enable the
 `compute_query_id` parameter in the same session :
 
 ```
-🐘 on postgres@r14 =# SET compute_query_id TO on;
+postgres=# SET compute_query_id TO on;
 SET
 ```                                                                   
 
 We run a query that uses a sort :
 
 ```
-🐘 on postgres@r14 =# EXPLAIN (COSTS OFF, ANALYZE, SETTINGS, VERBOSE) SELECT * FROM toto ORDER BY c2;
+postgres=# EXPLAIN (COSTS OFF, ANALYZE, SETTINGS, VERBOSE) SELECT * FROM toto ORDER BY c2;
 ┌────────────────────────────────────────────────────────────────────────────────────┐
 │                                     QUERY PLAN                                     │
 ├────────────────────────────────────────────────────────────────────────────────────┤
@@ -107,9 +107,9 @@ This query sorts rows on disk because `work_mem` is not high enough.
 We increase `work_mem` for this session:
 
 ```
-🐘 on postgres@r14 =# SET work_mem TO '1GB';
+postgres=# SET work_mem TO '1GB';
 SET
-🐘 on postgres@r14 =# EXPLAIN (COSTS OFF, ANALYZE, SETTINGS, VERBOSE) SELECT * FROM toto ORDER BY c2;
+postgres=# EXPLAIN (COSTS OFF, ANALYZE, SETTINGS, VERBOSE) SELECT * FROM toto ORDER BY c2;
 ┌────────────────────────────────────────────────────────────────────────────────────┐
 │                                     QUERY PLAN                                     │
 ├────────────────────────────────────────────────────────────────────────────────────┤
@@ -132,7 +132,7 @@ Now, it uses this memory to sort in memory even if the duration is roughly the s
 We go back to the default configuration (4 MB):
 
 ```
-🐘 on postgres@r14 =# RESET work_mem;
+postgres=# RESET work_mem;
 RESET
 ```
 
@@ -140,14 +140,14 @@ We insert the configuration to apply in the `pgqs_config` table (we get the
 query identifier from the `EXPLAIN output`):
 
 ```
-🐘 on postgres@r14 =# INSERT INTO pgqs_config VALUES (2507635424379213761, 'work_mem', '1000000000');
+postgres=# INSERT INTO pgqs_config VALUES (2507635424379213761, 'work_mem', '1000000000');
 INSERT 0 1
 ```
 
 We execute the query :
 
 ```
-🐘 on postgres@r14 =# EXPLAIN (COSTS OFF, ANALYZE, SETTINGS, VERBOSE) SELECT * FROM toto ORDER BY c2;
+postgres=# EXPLAIN (COSTS OFF, ANALYZE, SETTINGS, VERBOSE) SELECT * FROM toto ORDER BY c2;
 ┌────────────────────────────────────────────────────────────────────────────────────┐
 │                                     QUERY PLAN                                     │
 ├────────────────────────────────────────────────────────────────────────────────────┤
@@ -170,14 +170,14 @@ Our configuration is not applied. That's OK, the library isn't loaded.
 We load the library :
 
 ```
-🐘 on postgres@r14 =# LOAD 'pg_query_settings';
+postgres=# LOAD 'pg_query_settings';
 LOAD
 ```
 
 We execute the query again:
 
 ```
-🐘 on postgres@r14 =# EXPLAIN (COSTS OFF, ANALYZE, SETTINGS, VERBOSE) SELECT * FROM toto ORDER BY c2;
+postgres=# EXPLAIN (COSTS OFF, ANALYZE, SETTINGS, VERBOSE) SELECT * FROM toto ORDER BY c2;
 WARNING:  queryid is '2507635424379213761'
 WARNING:  value is 1000000000
 ┌────────────────────────────────────────────────────────────────────────────────────┐

@@ -58,7 +58,7 @@ Plus d'informations sur pg_query_settings
 Création de l'extension :
 
 ```
-🐘 on postgres@r14 =# CREATE EXTENSION pg_query_settings;
+postgres=# CREATE EXTENSION pg_query_settings;
 CREATE EXTENSION
 Time: 26.724 ms
 ```
@@ -66,10 +66,10 @@ Time: 26.724 ms
 Création et peuplement d'une table utilisateur :
 
 ```
-🐘 on postgres@r14 =# CREATE TABLE toto (c1 integer, c2 text);
+postgres=# CREATE TABLE toto (c1 integer, c2 text);
 CREATE TABLE
 Time: 22.244 ms
-🐘 on postgres@r14 =# INSERT INTO toto SELECT i, 'Ligne '||i FROM generate_series(1, 10000000) i;
+postgres=# INSERT INTO toto SELECT i, 'Ligne '||i FROM generate_series(1, 10000000) i;
 INSERT 0 10000000
 Time: 21240.040 ms (00:21.240)
 ```
@@ -78,14 +78,14 @@ Afin de récupérer l'identifiant d'une requête, il sera probablement nécessai
 d'activer dans la session le paramètre `compute_query_id` :
 
 ```
-🐘 on postgres@r14 =# SET compute_query_id TO on;
+postgres=# SET compute_query_id TO on;
 SET
 ```
 
 Exécution d'une requête qui génère un tri :
 
 ```
-🐘 on postgres@r14 =# EXPLAIN (COSTS OFF, ANALYZE, SETTINGS, VERBOSE) SELECT * FROM toto ORDER BY c2;
+postgres=# EXPLAIN (COSTS OFF, ANALYZE, SETTINGS, VERBOSE) SELECT * FROM toto ORDER BY c2;
 ┌────────────────────────────────────────────────────────────────────────────────────┐
 │                                     QUERY PLAN                                     │
 ├────────────────────────────────────────────────────────────────────────────────────┤
@@ -110,10 +110,10 @@ Cette requête fait un tri sur disque faute de suffisamment de `work_mem`.
 On augmente la `work_mem` dans la session :
 
 ```
-🐘 on postgres@r14 =# SET work_mem TO '1GB';
+postgres=# SET work_mem TO '1GB';
 SET
 Time: 0.624 ms
-🐘 on postgres@r14 =# EXPLAIN (COSTS OFF, ANALYZE, SETTINGS, VERBOSE) SELECT * FROM toto ORDER BY c2;
+postgres=# EXPLAIN (COSTS OFF, ANALYZE, SETTINGS, VERBOSE) SELECT * FROM toto ORDER BY c2;
 ┌────────────────────────────────────────────────────────────────────────────────────┐
 │                                     QUERY PLAN                                     │
 ├────────────────────────────────────────────────────────────────────────────────────┤
@@ -138,7 +138,7 @@ est sensiblement la même.
 On revient à la configuration par défaut (4 Mo) :
 
 ```
-🐘 on postgres@r14 =# RESET work_mem;
+postgres=# RESET work_mem;
 RESET
 Time: 0.527 ms
 ```
@@ -147,7 +147,7 @@ On insère la configuration à appliquer dans la table `pgqs_config` en récupé
 le `queryid` sur le plan d'exécution (ligne `Query Identifier`) :
 
 ```
-🐘 on postgres@r14 =# INSERT INTO pgqs_config VALUES (2507635424379213761, 'work_mem', '1000000000');
+postgres=# INSERT INTO pgqs_config VALUES (2507635424379213761, 'work_mem', '1000000000');
 INSERT 0 1
 Time: 11.757 ms
 ```
@@ -155,7 +155,7 @@ Time: 11.757 ms
 On rejoue la requête... :
 
 ```
-🐘 on postgres@r14 =# EXPLAIN (COSTS OFF, ANALYZE, SETTINGS, VERBOSE) SELECT * FROM toto ORDER BY c2;
+postgres=# EXPLAIN (COSTS OFF, ANALYZE, SETTINGS, VERBOSE) SELECT * FROM toto ORDER BY c2;
 ┌────────────────────────────────────────────────────────────────────────────────────┐
 │                                     QUERY PLAN                                     │
 ├────────────────────────────────────────────────────────────────────────────────────┤
@@ -181,7 +181,7 @@ bibliothèque !
 On charge la bibliothèque :
 
 ```
-🐘 on postgres@r14 =# LOAD 'pg_query_settings';
+postgres=# LOAD 'pg_query_settings';
 LOAD
 Time: 1.493 ms
 ```
@@ -189,7 +189,7 @@ Time: 1.493 ms
 On ré-exécute la requête... :
 
 ```
-🐘 on postgres@r14 =# EXPLAIN (COSTS OFF, ANALYZE, SETTINGS, VERBOSE) SELECT * FROM toto ORDER BY c2;
+postgres=# EXPLAIN (COSTS OFF, ANALYZE, SETTINGS, VERBOSE) SELECT * FROM toto ORDER BY c2;
 WARNING:  queryid is '2507635424379213761'
 WARNING:  value is 1000000000
 ┌────────────────────────────────────────────────────────────────────────────────────┐
