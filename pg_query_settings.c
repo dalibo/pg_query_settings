@@ -260,8 +260,8 @@ _PG_init(void)
       NULL
       );
 
-  /* Create a GUC variable named pg_query_settings.debug
-   * used to print debugging messages. */
+  /* Create a GUC variable named pg_query_settings.print_queryid
+   * used to print query identifier with NOTICE level. */
   DefineCustomBoolVariable(
       "pg_query_settings.print_queryid",
       "Print query identifier",
