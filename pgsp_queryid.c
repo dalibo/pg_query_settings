@@ -1,8 +1,9 @@
 /*-------------------------------------------------------------------------------------------------
  *
- * pgsp_normalize.c: Normalize a query.
+ * pgsp_queryid.c: Normalize a query and compute a query identifier.
  *
- * This is a partial copy of the pg_store_plans/pgsp_json.c file.
+ * This is a partial copy of the pg_store_plans/pgsp_json.c
+ *                           and pg_store_plans/pg_store_plans.c files.
  *
  * Copyright (c) 2012-2022, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
  *
@@ -10,6 +11,8 @@
  */
 
 #include "postgres.h"
+
+#include <access/hash.h>
 
 #include "nodes/parsenodes.h"
 
@@ -20,6 +23,24 @@
 
 
 void normalize_expr(char *expr, bool preserve_space);
+uint64 hash_query(const char* query);
+
+uint64
+hash_query(const char* query)
+{
+    uint64 queryid;
+
+    char *normquery = pstrdup(query);
+    normalize_expr(normquery, false);
+    queryid = hash_any((const unsigned char*)normquery, strlen(normquery));
+    pfree(normquery);
+
+    /* If we are unlucky enough to get a hash of zero, use 1 instead */
+    if (queryid == 0)
+        queryid = 1;
+
+    return queryid;
+}
 
 /*
  * Look for these operator characters in order to decide whether to strip

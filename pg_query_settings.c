@@ -15,7 +15,6 @@
 #include <postgres.h>
 
 #include <access/heapam.h>
-#include <access/hash.h>
 #include <catalog/namespace.h>
 #include <miscadmin.h>
 #include <executor/executor.h>
@@ -25,7 +24,7 @@
 #include <utils/guc.h>
 #include <lib/ilist.h>
 
-#include "pgsp_normalize.h"
+#include "pgsp_queryid.h"
 
 /* This is a module :) */
 
@@ -44,14 +43,11 @@ PG_MODULE_MAGIC;
 void _PG_init(void);
 void _PG_fini(void);
 
-#if PG_VERSION_NUM < 140000
-static uint64 hash_query(const char* query);
-#endif
-
 /* Variables */
 
 static bool    enabled = true;
 static bool    debug = false;
+static bool    printQueryId = false;
 static slist_head paramResetList = SLIST_STATIC_INIT(paramResetList);
 
 /* Constants */
@@ -70,31 +66,6 @@ static planner_hook_type prevHook  = NULL;
 static ExecutorEnd_hook_type prev_ExecutorEnd = NULL;
 
 /* Functions */
-
-/*
- * Compute QueryID
- *
- * Part of pg_store_plans.c in https://github.com/ossc-db/pg_store_plans
- */
-
-#if PG_VERSION_NUM < 140000
-static uint64
-hash_query(const char* query)
-{
-    uint64 queryid;
-
-    char *normquery = pstrdup(query);
-    normalize_expr(normquery, false);
-    queryid = hash_any((const unsigned char*)normquery, strlen(normquery));
-    pfree(normquery);
-
-    /* If we are unlucky enough to get a hash of zero, use 1 instead */
-    if (queryid == 0)
-        queryid = 1;
-
-    return queryid;
-}
-#endif
 
 /*
  * Destroy the list of parameters.
@@ -155,9 +126,10 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 #else
     queryid = parse->queryId;
 #endif
-    if (debug) elog(DEBUG1, "QueryID is '%li'", queryid);
 
-    if (debug) elog(DEBUG1, "query's queryid is '%li'", (int64)(parse->queryId));
+    if (printQueryId) elog(NOTICE, "QueryID is '%li'", queryid);
+
+    if (debug) elog(DEBUG1, "query's QueryID is '%li'", queryid);
 
     config_relid = RelnameGetRelid(pgqs_config);
     config_rel = table_open(config_relid, AccessShareLock);
@@ -169,7 +141,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       /* Get the queryid in the currently read tuple. */
       data = heap_getattr(config_tuple, 1, config_rel->rd_att, &isnull);
       id = DatumGetInt64(data);
-      if (debug) elog(DEBUG1, "config queryid is %li", id);
+      if (debug) elog(DEBUG1, "config QueryID is '%li'", id);
 
       /* Compare the queryid previously obtained with the queryid
        * of the current query. */
@@ -280,6 +252,21 @@ _PG_init(void)
       "Print debugging messages",
       "Print debugging messages",
       &debug,
+      false,
+      PGC_USERSET,
+      0,
+      NULL,
+      NULL,
+      NULL
+      );
+
+  /* Create a GUC variable named pg_query_settings.debug
+   * used to print debugging messages. */
+  DefineCustomBoolVariable(
+      "pg_query_settings.print_queryid",
+      "Print query identifier",
+      "Print query identifier",
+      &printQueryId,
       false,
       PGC_USERSET,
       0,

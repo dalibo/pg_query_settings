@@ -1,6 +1,6 @@
 /*-------------------------------------------------------------------------------------------------
  *
- * pgsp_normalize.h: Normalize a query.
+ * pgsp_queryid.h: Normalize a query and get compute a queryid.
  *
  * This is a partial copy of the pg_store_plans/pgsp_json.h file.
  *
@@ -9,4 +9,4 @@
  *-------------------------------------------------------------------------------------------------
  */
 
-extern void normalize_expr(char *expr, bool preserve_space);
+extern uint64 hash_query(const char* query);
