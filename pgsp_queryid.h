@@ -1,6 +1,6 @@
 /*-------------------------------------------------------------------------------------------------
  *
- * pgsp_queryid.h: Normalize a query and get compute a queryid.
+ * pgsp_queryid.h: Normalize a query and compute a queryid.
  *
  * This is a partial copy of the pg_store_plans/pgsp_json.h file.
  *
