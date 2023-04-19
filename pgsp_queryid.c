@@ -158,10 +158,12 @@ normalize_expr(char *expr, bool preserve_space)
 			inExplain = true;
 			continue;
 		}
-		/* After an EXPLAIN statement without parameters */
+		/* After an EXPLAIN statement without parenthesis */
 		if ( tok != 40 && cmptok == 2 && inExplain )
 		{
 			inExplain = false;
+
+			/* With only one parameter */
 			if ( tok == 288 || tok == 695 )
 			{
 				continue;
