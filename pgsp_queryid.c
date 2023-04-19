@@ -29,9 +29,9 @@ uint64
 hash_query(const char* query)
 {
     uint64 queryid;
-
     char *normquery = pstrdup(query);
     normalize_expr(normquery, false);
+
     queryid = hash_any((const unsigned char*)normquery, strlen(normquery));
     pfree(normquery);
 
@@ -123,9 +123,9 @@ normalize_expr(char *expr, bool preserve_space)
 	YYLTYPE start;
 	char *wp;
 	int			tok, lasttok;
+	int cmptok;
 	bool inExplain;
 	bool firstOpenParen;
-	bool firstCloseParen;
 
 	wp = expr;
 	yyscanner = scanner_init(expr,
@@ -142,41 +142,46 @@ normalize_expr(char *expr, bool preserve_space)
 #endif
 	lasttok = 0;
 	lastloc = -1;
+	cmptok = 0;
 	inExplain = false;
 	firstOpenParen = false;
-	firstCloseParen = false;
 
 	for (;;)
 	{
 
 		tok = norm_yylex(expr, &yylval, &yylloc, yyscanner);
- 
-		if ( inExplain && firstOpenParen && firstCloseParen )
-		{
-			inExplain = false;
-			firstOpenParen = false;
-			firstCloseParen = false;
-		}
+		++cmptok;
 
-		if ( tok == 404 )
+		/* Catch EXPLAIN statement */
+		if ( tok == 404 && cmptok == 1 )
 		{
 			inExplain = true;
 			continue;
 		}
-
+		/* After an EXPLAIN statement without parameters */
+		if ( tok != 40 && cmptok == 2 && inExplain )
+		{
+			inExplain = false;
+			if ( tok == 288 || tok == 695 )
+			{
+				continue;
+			}
+		}
+		/* Catch open parenthesis of EXPLAIN statement  */
 		if ( tok == 40 && inExplain && !firstOpenParen )
 		{
 			firstOpenParen = true;
 			continue;
 		}
-
-		if ( tok == 41 && inExplain && firstOpenParen && !firstCloseParen )
+		/* Catch close parenthesis of EXPLAIN statement */
+		if ( tok == 41 && inExplain && firstOpenParen )
 		{
-			firstCloseParen = true;
+			inExplain = false;
+			firstOpenParen = false;
 			continue;
 		}
-
-		if ( inExplain && firstOpenParen && !firstCloseParen )
+		/* Catch options of EXPLAIN statement */
+		if ( inExplain && firstOpenParen )
 		{
 			continue;
 		}
