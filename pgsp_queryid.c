@@ -111,6 +111,7 @@ norm_yylex(char *str, core_YYSTYPE *yylval, YYLTYPE *yylloc, core_yyscan_t yysca
 #define ScanKeywords (*ScanKeywords)
 #define ScanKeywordTokens NumScanKeywords
 #endif
+
 void
 normalize_expr(char *expr, bool preserve_space)
 {
@@ -122,6 +123,9 @@ normalize_expr(char *expr, bool preserve_space)
 	YYLTYPE start;
 	char *wp;
 	int			tok, lasttok;
+	bool inExplain;
+	bool firstOpenParen;
+	bool firstCloseParen;
 
 	wp = expr;
 	yyscanner = scanner_init(expr,
@@ -138,10 +142,44 @@ normalize_expr(char *expr, bool preserve_space)
 #endif
 	lasttok = 0;
 	lastloc = -1;
+	inExplain = false;
+	firstOpenParen = false;
+	firstCloseParen = false;
 
 	for (;;)
 	{
+
 		tok = norm_yylex(expr, &yylval, &yylloc, yyscanner);
+ 
+		if ( inExplain && firstOpenParen && firstCloseParen )
+		{
+			inExplain = false;
+			firstOpenParen = false;
+			firstCloseParen = false;
+		}
+
+		if ( tok == 404 )
+		{
+			inExplain = true;
+			continue;
+		}
+
+		if ( tok == 40 && inExplain && !firstOpenParen )
+		{
+			firstOpenParen = true;
+			continue;
+		}
+
+		if ( tok == 41 && inExplain && firstOpenParen && !firstCloseParen )
+		{
+			firstCloseParen = true;
+			continue;
+		}
+
+		if ( inExplain && firstOpenParen && !firstCloseParen )
+		{
+			continue;
+		}
 
 		start = yylloc;
 
