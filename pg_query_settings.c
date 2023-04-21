@@ -213,8 +213,11 @@ _PG_init(void)
   /* We exit if our config table doesn't exist. */
   if (!RelnameGetRelid(pgqs_config))
   {
-    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-    errmsg("'%s' table not found!!",pgqs_config)));
+    ereport(ERROR,
+            (errcode(ERRCODE_UNDEFINED_TABLE),
+             errmsg("'%s' table not found!!", pgqs_config),
+             errhint("'%s' table is created via 'CREATE EXTENSION pg_query_settings;'"
+                     , pgqs_config)));
     return;
   }
 
