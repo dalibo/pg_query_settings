@@ -12,18 +12,18 @@
 
 /* Headers */
 
-#include <postgres.h>
+#include "postgres.h"
 
-#include <access/heapam.h>
-#include <catalog/namespace.h>
-#include <miscadmin.h>
-#include <executor/executor.h>
-#include <optimizer/planner.h>
-#include <storage/bufmgr.h>
-#include <utils/builtins.h>
-#include <utils/guc.h>
-#include <optimizer/optimizer.h>
-#include <lib/ilist.h>
+#include "access/heapam.h"
+#include "catalog/namespace.h"
+#include "miscadmin.h"
+#include "executor/executor.h"
+#include "optimizer/planner.h"
+#include "storage/bufmgr.h"
+#include "utils/builtins.h"
+#include "utils/guc.h"
+#include "optimizer/optimizer.h"
+#include "lib/ilist.h"
 
 /* This is a module :) */
 
@@ -134,7 +134,6 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 
         /* Get the value for the parameter (table field : 'value'). */
         data = heap_getattr(config_tuple, 3, config_rel->rd_att, &isnull);
-        /* FIXME should we add a test on isnull? */
         guc_value = pstrdup(TextDatumGetCString(data));
 
         param = malloc(sizeof(parameter));
@@ -168,8 +167,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
         }
         PG_END_TRY();
       }
-
-  }
+    }
 
 close:
     table_endscan(config_scan);
@@ -212,6 +210,14 @@ PlanTuner_ExecutorEnd(QueryDesc *q)
 void
 _PG_init(void)
 {
+  /* We exit if our config table doesn't exist. */
+  if (!RelnameGetRelid(pgqs_config))
+  {
+    ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+    errmsg("'%s' table not found!!",pgqs_config)));
+    return;
+  }
+
   /* Create a GUC variable named pg_query_settings.enabled
    * used to enable or disable this module. */
   DefineCustomBoolVariable(
