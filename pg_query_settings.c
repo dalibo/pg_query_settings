@@ -38,6 +38,10 @@ PG_MODULE_MAGIC;
 #define COMPUTE_LOCAL_QUERYID 0
 #endif
 
+#if COMPUTE_LOCAL_QUERYID
+#include "parser/analyze.h"
+#endif
+
 /* Function definitions */
 
 void _PG_init(void);
@@ -49,6 +53,10 @@ static bool    enabled = true;
 static bool    debug = false;
 static bool    printQueryId = false;
 static slist_head paramResetList = SLIST_STATIC_INIT(paramResetList);
+
+#if COMPUTE_LOCAL_QUERYID
+static char * pgqs_queryString = NULL;
+#endif
 
 /* Constants */
 /* Name of our config table */
@@ -65,7 +73,36 @@ typedef struct parameter
 static planner_hook_type prevHook  = NULL;
 static ExecutorEnd_hook_type prev_ExecutorEnd = NULL;
 
+#if COMPUTE_LOCAL_QUERYID
+static post_parse_analyze_hook_type prev_post_parse_analyze_hook = NULL;
+static void pgqs_post_parse_analyze(ParseState *pstate, Query *query);
+#endif
+
+// -----------------------------------------------------------------
 /* Functions */
+
+#if COMPUTE_LOCAL_QUERYID
+
+static void pgqs_post_parse_analyze(ParseState *pstate, Query *query)
+{
+ /* here we get the query string and put it in pgqs_queryString.
+  */
+
+  if (debug) elog (DEBUG1,"Entering pgqs_post_parse_analyze");
+
+
+  if (prev_post_parse_analyze_hook)
+    prev_post_parse_analyze_hook(pstate, query);
+
+  if (debug) elog (DEBUG1,"setting pgqs_queryString to \"%s\"",pstate->p_sourcetext);
+  pgqs_queryString = pstrdup(pstate->p_sourcetext);
+
+  if (debug) elog (DEBUG1,"Exiting pgqs_post_parse_analyze");
+
+}
+
+#endif //COMPUTE_LOCAL_QUERYID = 1
+
 
 /*
  * Destroy the list of parameters.
@@ -103,7 +140,11 @@ static void DestroyPRList(bool reset)
  * default values afterwards.
  */
 static PlannedStmt *
+#if PG_VERSION_NUM < 130000
+execPlantuner(Query *parse, int cursorOptions, ParamListInfo boundp)
+#else
 execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListInfo boundp)
+#endif
 {
   PlannedStmt    *result;
   Relation       config_rel;
@@ -121,6 +162,16 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 
   if (enabled)
   {
+
+#if PG_VERSION_NUM < 130000
+
+    char * query_st;
+
+    query_st = pgqs_queryString;
+    if (debug) elog(DEBUG1,"query_st=%s", query_st);
+    if (debug) elog(DEBUG1,"pgqs_queryString=%s", pgqs_queryString);
+#endif
+
 #if COMPUTE_LOCAL_QUERYID
     queryid = hash_query(query_st);
 #else
@@ -141,12 +192,13 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       /* Get the queryid in the currently read tuple. */
       data = heap_getattr(config_tuple, 1, config_rel->rd_att, &isnull);
       id = DatumGetInt64(data);
-      if (debug) elog(DEBUG1, "config QueryID is '%li'", id);
+      if (debug) elog(DEBUG1, "Config QueryID is '%li'", id);
 
       /* Compare the queryid previously obtained with the queryid
        * of the current query. */
       if (queryid == id)
       {
+
         /* Get the name of the parameter (table field : 'param'). */
         data = heap_getattr(config_tuple, 2, config_rel->rd_att, &isnull);
         guc_name = pstrdup(TextDatumGetCString(data));
@@ -172,6 +224,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
          */
         PG_TRY();
         {
+          elog(DEBUG1, "Setting %s = %s", guc_name,guc_value);
           SetConfigOption(guc_name, guc_value, PGC_USERSET, PGC_S_SESSION);
         }
         PG_CATCH();
@@ -202,9 +255,21 @@ close:
    * Call next hook if it exists
    */
   if (prevHook)
-    result = prevHook(parse, query_st, cursorOptions, boundp);
+
+#if PG_VERSION_NUM < 130000
+  result = prevHook(parse, cursorOptions, boundp);
+
+#else
+  result = prevHook(parse, query_st, cursorOptions, boundp);
+#endif
+
   else
-    result = standard_planner(parse, query_st, cursorOptions, boundp);
+
+#if PG_VERSION_NUM < 130000
+      result = standard_planner(parse, cursorOptions, boundp);
+#else
+      result = standard_planner(parse, query_st, cursorOptions, boundp);
+#endif
 
   return result;
 }
@@ -275,6 +340,8 @@ _PG_init(void)
       NULL
       );
 
+  if (debug) elog(DEBUG1,"Entering _PG_init()");
+
   /* Set our two hooks */
   if (planner_hook != execPlantuner)
   {
@@ -287,6 +354,13 @@ _PG_init(void)
     prev_ExecutorEnd = ExecutorEnd_hook;
     ExecutorEnd_hook = PlanTuner_ExecutorEnd;
   }
+
+#if COMPUTE_LOCAL_QUERYID
+  prev_post_parse_analyze_hook = post_parse_analyze_hook;
+  post_parse_analyze_hook = pgqs_post_parse_analyze;
+#endif
+
+  if (debug) elog(DEBUG1,"Exiting _PG_init()");
 }
 
 /*
@@ -295,6 +369,17 @@ _PG_init(void)
 void
 _PG_fini(void)
 {
+
+  if (debug) elog(DEBUG1,"Entering _PG_fini()");
+
   planner_hook = prevHook;
   ExecutorEnd_hook = prev_ExecutorEnd;
+
+  #if COMPUTE_LOCAL_QUERYID
+    if (debug) elog(DEBUG1,"Recovering post_parse_analyze_hook");
+    post_parse_analyze_hook = prev_post_parse_analyze_hook;
+  #endif
+
+  if (debug) elog(DEBUG1,"Exiting _PG_fini()");
+
 }

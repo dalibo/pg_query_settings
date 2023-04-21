@@ -3,4 +3,4 @@ comment = 'Dynamically set queries GUCs based on their queryid'
 default_version = '0.1'
 module_pathname = '$libdir/pg_query_settings'
 relocatable = true
-trusted = true
+#trusted = true
