@@ -12,18 +12,18 @@
 
 /* Headers */
 
-#include <postgres.h>
+#include "postgres.h"
 
-#include <access/heapam.h>
-#include <catalog/namespace.h>
-#include <miscadmin.h>
-#include <executor/executor.h>
-#include <optimizer/planner.h>
-#include <storage/bufmgr.h>
-#include <utils/builtins.h>
-#include <utils/guc.h>
-#include <optimizer/optimizer.h>
-#include <lib/ilist.h>
+#include "access/heapam.h"
+#include "catalog/namespace.h"
+#include "executor/executor.h"
+#include "lib/ilist.h"
+#include "miscadmin.h"
+#include "optimizer/optimizer.h"
+#include "optimizer/planner.h"
+#include "storage/bufmgr.h"
+#include "utils/builtins.h"
+#include "utils/guc.h"
 
 /* This is a module :) */
 
