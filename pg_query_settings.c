@@ -134,7 +134,6 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 
         /* Get the value for the parameter (table field : 'value'). */
         data = heap_getattr(config_tuple, 3, config_rel->rd_att, &isnull);
-        /* FIXME should we add a test on isnull? */
         guc_value = pstrdup(TextDatumGetCString(data));
 
         param = malloc(sizeof(parameter));
