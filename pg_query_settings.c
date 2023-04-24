@@ -160,6 +160,14 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
   parameter      *param = NULL;
   uint64          queryid = 0;
 
+// Index scan
+  IndexFetchTableData * config_index_scan = NULL;
+  bool                  index_scan_call_again = false;
+  ItemPointerData       checktid;
+  ItemPointerData       tmptid;
+  TupleTableSlot *      slot;
+  Relation              indexRel;
+
   if (enabled)
   {
     config_relid = RelnameGetRelid(pgqs_config);
@@ -188,6 +196,42 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       config_rel = table_open(config_relid, AccessShareLock);
 
       config_scan = table_beginscan(config_rel, GetActiveSnapshot(), 0, NULL);
+
+// IndexScan begin
+      config_index_scan = table_index_fetch_begin(config_rel);
+      tmptid = checktid;
+
+      if (!table_index_fetch_tuple( config_index_scan, &tmptid,SnapshotSelf,
+                                    slot, &index_scan_call_again, NULL))
+      {
+        /*
+        * All rows referenced by the index entry are dead, so skip */
+        ExecDropSingleTupleTableSlot(slot);
+        goto close;
+      }
+      /*
+       * Open the index */
+          indexRel = index_open();
+          indexInfo = BuildIndexInfo(indexRel);
+
+          /*
+           * Typically the index won't have expressions, but if it does we need an
+           * EState to evaluate them.  We need it for exclusion constraints too,
+           * even if they are just on simple columns.
+           */
+          if (indexInfo->ii_Expressions != NIL ||
+              indexInfo->ii_ExclusionOps != NULL)
+          {
+              estate = CreateExecutorState();
+              econtext = GetPerTupleExprContext(estate);
+              econtext->ecxt_scantuple = slot;
+          }
+          else
+              estate = NULL;
+
+
+
+// -----------------------------
 
       while ((config_tuple = heap_getnext(config_scan, ForwardScanDirection)) != NULL)
       {
@@ -246,6 +290,10 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 close:
       table_endscan(config_scan);
       table_close(config_rel, AccessShareLock);
+
+// Index Scan End
+      table_index_fetch_end(config_index_scan);
+
       if (rethrow)
       {
         PG_RE_THROW();
