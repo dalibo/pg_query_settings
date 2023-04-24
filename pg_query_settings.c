@@ -113,70 +113,86 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
     if (debug) elog(DEBUG1, "query's queryid is '%li'", (int64)(parse->queryId));
 
     config_relid = RelnameGetRelid(pgqs_config);
-    config_rel = table_open(config_relid, AccessShareLock);
 
-    config_scan = table_beginscan(config_rel, GetActiveSnapshot(), 0, NULL);
-
-    while ((config_tuple = heap_getnext(config_scan, ForwardScanDirection)) != NULL)
+    /* Test if our config table exists. */
+    if (config_relid != 0 )
     {
-      /* Get the queryid in the currently read tuple. */
-      data = heap_getattr(config_tuple, 1, config_rel->rd_att, &isnull);
-      id = DatumGetInt64(data);
-      if (debug) elog(DEBUG1, "config queryid is %li", id);
 
-      /* Compare the queryid previously obtained with the queryid
-       * of the current query. */
-      if (parse->queryId == id)
+      config_rel = table_open(config_relid, AccessShareLock);
+
+      config_scan = table_beginscan(config_rel, GetActiveSnapshot(), 0, NULL);
+
+      while ((config_tuple = heap_getnext(config_scan, ForwardScanDirection)) != NULL)
       {
-        /* Get the name of the parameter (table field : 'param'). */
-        data = heap_getattr(config_tuple, 2, config_rel->rd_att, &isnull);
-        guc_name = pstrdup(TextDatumGetCString(data));
+        /* Get the queryid in the currently read tuple. */
+        data = heap_getattr(config_tuple, 1, config_rel->rd_att, &isnull);
+        id = DatumGetInt64(data);
+        if (debug) elog(DEBUG1, "config queryid is %li", id);
 
-        /* Get the value for the parameter (table field : 'value'). */
-        data = heap_getattr(config_tuple, 3, config_rel->rd_att, &isnull);
-        /* FIXME should we add a test on isnull? */
-        guc_value = pstrdup(TextDatumGetCString(data));
-
-        param = malloc(sizeof(parameter));
-        param->name = guc_name;
-
-        slist_push_head(&paramResetList, &param->node);
-
-        /*
-         * Here we use the PostgreSQL try/catch mecanism so that when
-         * SetConfigOption() returns an error, the current transaction
-         * is rollbacked and its error message is logged. Such an
-         * error message could be like:
-         * 'ERROR:  unrecognized configuration parameter "Dalibo"'
-         * or like:
-         * 'ERROR:  invalid value for parameter "work_mem": "512KB"'.
-         */
-        PG_TRY();
+        /* Compare the queryid previously obtained with the queryid
+         * of the current query. */
+        if (parse->queryId == id)
         {
-          SetConfigOption(guc_name, guc_value, PGC_USERSET, PGC_S_SESSION);
-        }
-        PG_CATCH();
-        {
-          rethrow = true;
+          /* Get the name of the parameter (table field : 'param'). */
+          data = heap_getattr(config_tuple, 2, config_rel->rd_att, &isnull);
+          guc_name = pstrdup(TextDatumGetCString(data));
 
-          /* Current transaction will be rollbacked when exception is
-           * re-thrown, so there's no need to reset the parameters that
-           * may have successfully been set. Let's just destroy the list.
+          /* Get the value for the parameter (table field : 'value'). */
+          data = heap_getattr(config_tuple, 3, config_rel->rd_att, &isnull);
+          /* FIXME should we add a test on isnull? */
+          guc_value = pstrdup(TextDatumGetCString(data));
+
+          param = malloc(sizeof(parameter));
+          param->name = guc_name;
+
+          slist_push_head(&paramResetList, &param->node);
+
+          /*
+           * Here we use the PostgreSQL try/catch mecanism so that when
+           * SetConfigOption() returns an error, the current transaction
+           * is rollbacked and its error message is logged. Such an
+           * error message could be like:
+           * 'ERROR:  unrecognized configuration parameter "Dalibo"'
+           * or like:
+           * 'ERROR:  invalid value for parameter "work_mem": "512KB"'.
            */
-          DestroyPRList(false);
-          goto close;
+          PG_TRY();
+          {
+            SetConfigOption(guc_name, guc_value, PGC_USERSET, PGC_S_SESSION);
+          }
+          PG_CATCH();
+          {
+            rethrow = true;
+
+            /* Current transaction will be rollbacked when exception is
+             * re-thrown, so there's no need to reset the parameters that
+             * may have successfully been set. Let's just destroy the list.
+             */
+            DestroyPRList(false);
+            goto close;
+          }
+          PG_END_TRY();
         }
-        PG_END_TRY();
       }
 
-  }
-
 close:
-    table_endscan(config_scan);
-    table_close(config_rel, AccessShareLock);
-    if (rethrow)
+      table_endscan(config_scan);
+      table_close(config_rel, AccessShareLock);
+      if (rethrow)
+      {
+        PG_RE_THROW();
+      }
+    }
+    else
     {
-      PG_RE_THROW();
+      /* If our config table doesn't exist
+       * we report a warning + hint messages. */ 
+      ereport(WARNING,
+              (errcode(ERRCODE_UNDEFINED_TABLE),
+               errmsg("'%s' table not found!\nTherefore, no on-the-fly GUC parameter"
+                      " changes are possible for this query.", pgqs_config),
+               errhint("'%s' table is created via 'CREATE EXTENSION pg_query_settings;'"
+                       , pgqs_config)));
     }
   }
 
