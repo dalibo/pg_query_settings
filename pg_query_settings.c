@@ -115,7 +115,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
     config_relid = RelnameGetRelid(pgqs_config);
 
     /* Test if our config table exists. */
-    if (config_relid != 0 )
+    if (OidIsValid(config_relid))
     {
 
       config_rel = table_open(config_relid, AccessShareLock);
@@ -182,17 +182,6 @@ close:
       {
         PG_RE_THROW();
       }
-    }
-    else
-    {
-      /* If our config table doesn't exist
-       * we report a warning + hint messages. */ 
-      ereport(WARNING,
-              (errcode(ERRCODE_UNDEFINED_TABLE),
-               errmsg("'%s' table not found!\nTherefore, no on-the-fly GUC parameter"
-                      " changes are possible for this query.", pgqs_config),
-               errhint("'%s' table is created via 'CREATE EXTENSION pg_query_settings;'"
-                       , pgqs_config)));
     }
   }
 
