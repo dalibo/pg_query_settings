@@ -162,14 +162,17 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 
   if (enabled)
   {
+    config_relid = RelnameGetRelid(pgqs_config);
+
+    if (OidIsValid(config_relid))
+    {
 
 #if PG_VERSION_NUM < 130000
+      char * query_st;
+      query_st = pgqs_queryString;
 
-    char * query_st;
-
-    query_st = pgqs_queryString;
-    if (debug) elog(DEBUG1,"query_st=%s", query_st);
-    if (debug) elog(DEBUG1,"pgqs_queryString=%s", pgqs_queryString);
+      if (debug) elog(DEBUG1,"query_st=%s", query_st);
+      if (debug) elog(DEBUG1,"pgqs_queryString=%s", pgqs_queryString);
 #endif
 
 #if COMPUTE_LOCAL_QUERYID
@@ -178,75 +181,75 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
     queryid = parse->queryId;
 #endif
 
-    if (printQueryId) elog(NOTICE, "QueryID is '%li'", queryid);
+      if (printQueryId) elog(NOTICE, "QueryID is '%li'", queryid);
 
-    if (debug) elog(DEBUG1, "query's QueryID is '%li'", queryid);
+      if (debug) elog(DEBUG1, "query's QueryID is '%li'", queryid);
 
-    config_relid = RelnameGetRelid(pgqs_config);
-    config_rel = table_open(config_relid, AccessShareLock);
+      config_rel = table_open(config_relid, AccessShareLock);
 
-    config_scan = table_beginscan(config_rel, GetActiveSnapshot(), 0, NULL);
+      config_scan = table_beginscan(config_rel, GetActiveSnapshot(), 0, NULL);
 
-    while ((config_tuple = heap_getnext(config_scan, ForwardScanDirection)) != NULL)
-    {
-      /* Get the queryid in the currently read tuple. */
-      data = heap_getattr(config_tuple, 1, config_rel->rd_att, &isnull);
-      id = DatumGetInt64(data);
-      if (debug) elog(DEBUG1, "Config QueryID is '%li'", id);
-
-      /* Compare the queryid previously obtained with the queryid
-       * of the current query. */
-      if (queryid == id)
+      while ((config_tuple = heap_getnext(config_scan, ForwardScanDirection)) != NULL)
       {
+        /* Get the queryid in the currently read tuple. */
+        data = heap_getattr(config_tuple, 1, config_rel->rd_att, &isnull);
+        id = DatumGetInt64(data);
+        if (debug) elog(DEBUG1, "Config QueryID is '%li'", id);
 
-        /* Get the name of the parameter (table field : 'param'). */
-        data = heap_getattr(config_tuple, 2, config_rel->rd_att, &isnull);
-        guc_name = pstrdup(TextDatumGetCString(data));
-
-        /* Get the value for the parameter (table field : 'value'). */
-        data = heap_getattr(config_tuple, 3, config_rel->rd_att, &isnull);
-        guc_value = pstrdup(TextDatumGetCString(data));
-
-        param = malloc(sizeof(parameter));
-        param->name = guc_name;
-
-        slist_push_head(&paramResetList, &param->node);
-
-        /*
-         * Here we use the PostgreSQL try/catch mecanism so that when
-         * SetConfigOption() returns an error, the current transaction
-         * is rollbacked and its error message is logged. Such an
-         * error message could be like:
-         * 'ERROR:  unrecognized configuration parameter "Dalibo"'
-         * or like:
-         * 'ERROR:  invalid value for parameter "work_mem": "512KB"'.
-         */
-        PG_TRY();
+        /* Compare the queryid previously obtained with the queryid
+         * of the current query. */
+        if (queryid == id)
         {
-          elog(DEBUG1, "Setting %s = %s", guc_name,guc_value);
-          SetConfigOption(guc_name, guc_value, PGC_USERSET, PGC_S_SESSION);
-        }
-        PG_CATCH();
-        {
-          rethrow = true;
 
-          /* Current transaction will be rollbacked when exception is
-           * re-thrown, so there's no need to reset the parameters that
-           * may have successfully been set. Let's just destroy the list.
+          /* Get the name of the parameter (table field : 'param'). */
+          data = heap_getattr(config_tuple, 2, config_rel->rd_att, &isnull);
+          guc_name = pstrdup(TextDatumGetCString(data));
+
+          /* Get the value for the parameter (table field : 'value'). */
+          data = heap_getattr(config_tuple, 3, config_rel->rd_att, &isnull);
+          guc_value = pstrdup(TextDatumGetCString(data));
+
+          param = malloc(sizeof(parameter));
+          param->name = guc_name;
+
+          slist_push_head(&paramResetList, &param->node);
+
+          /*
+           * Here we use the PostgreSQL try/catch mecanism so that when
+           * SetConfigOption() returns an error, the current transaction
+           * is rollbacked and its error message is logged. Such an
+           * error message could be like:
+           * 'ERROR:  unrecognized configuration parameter "Dalibo"'
+           * or like:
+           * 'ERROR:  invalid value for parameter "work_mem": "512KB"'.
            */
-          DestroyPRList(false);
-          goto close;
+          PG_TRY();
+          {
+            elog(DEBUG1, "Setting %s = %s", guc_name,guc_value);
+            SetConfigOption(guc_name, guc_value, PGC_USERSET, PGC_S_SESSION);
+          }
+          PG_CATCH();
+          {
+            rethrow = true;
+
+            /* Current transaction will be rollbacked when exception is
+             * re-thrown, so there's no need to reset the parameters that
+             * may have successfully been set. Let's just destroy the list.
+             */
+            DestroyPRList(false);
+            goto close;
+          }
+          PG_END_TRY();
         }
-        PG_END_TRY();
       }
-    }
 
 close:
-    table_endscan(config_scan);
-    table_close(config_rel, AccessShareLock);
-    if (rethrow)
-    {
-      PG_RE_THROW();
+      table_endscan(config_scan);
+      table_close(config_rel, AccessShareLock);
+      if (rethrow)
+      {
+        PG_RE_THROW();
+      }
     }
   }
 
