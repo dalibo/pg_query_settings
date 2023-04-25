@@ -245,9 +245,6 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
         indexScan_result = (Datum) 0;
     }
 
-    // Clean up
-    index_endscan(config_index_scan);
-    index_close(indexRel, AccessShareLock);
 
       // BuildIndexInfo
       //if (debug) elog(DEBUG1, "Getting the indexInfo");
@@ -332,7 +329,14 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
           }
           PG_END_TRY();
 close:
-      //table_endscan(config_scan);
+      // Clean up
+      if (debug) elog(DEBUG1, "Ending the index scan");
+      index_endscan(config_index_scan);
+      if (debug) elog(DEBUG1, "Closing index");
+      index_close(indexRel, AccessShareLock);
+
+      // table_endscan(config_scan);
+      if (debug) elog(DEBUG1, "Closing pgqs_config");
       table_close(config_rel, AccessShareLock);
 
 // Index Scan End
