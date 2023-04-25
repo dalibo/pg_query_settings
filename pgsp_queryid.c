@@ -32,7 +32,7 @@ hash_query(const char* query)
     char *normquery = pstrdup(query);
     normalize_expr(normquery, false);
 
-    queryid = hash_any((const unsigned char*)normquery, strlen(normquery));
+    queryid = hash_any_extended((const unsigned char*)normquery, strlen(normquery),0);
     pfree(normquery);
 
     /* If we are unlucky enough to get a hash of zero, use 1 instead */
@@ -148,12 +148,17 @@ normalize_expr(char *expr, bool preserve_space)
 
 	for (;;)
 	{
-
 		tok = norm_yylex(expr, &yylval, &yylloc, yyscanner);
 		++cmptok;
 
+#if PG_VERSION_NUM >= 120000 && PG_VERSION_NUM < 140000
 		/* Catch EXPLAIN statement */
+#if PG_VERSION_NUM < 130000
+		if ( tok == 402 && cmptok == 1 )
+#endif
+#if PG_VERSION_NUM >= 130000
 		if ( tok == 404 && cmptok == 1 )
+#endif
 		{
 			inExplain = true;
 			continue;
@@ -164,7 +169,12 @@ normalize_expr(char *expr, bool preserve_space)
 			inExplain = false;
 
 			/* With only one parameter */
+#if PG_VERSION_NUM < 130000
+			if ( tok == 286 || tok == 685 )
+#endif
+#if PG_VERSION_NUM >= 130000
 			if ( tok == 288 || tok == 695 )
+#endif
 			{
 				continue;
 			}
@@ -187,7 +197,7 @@ normalize_expr(char *expr, bool preserve_space)
 		{
 			continue;
 		}
-
+#endif
 		start = yylloc;
 
 		if (lastloc >= 0)
