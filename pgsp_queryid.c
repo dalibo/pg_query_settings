@@ -124,8 +124,10 @@ normalize_expr(char *expr, bool preserve_space)
 	char *wp;
 	int			tok, lasttok;
 	int cmptok;
+#if PG_VERSION_NUM >= 120000 && PG_VERSION_NUM < 140000
 	bool inExplain;
 	bool firstOpenParen;
+#endif
 
 	wp = expr;
 	yyscanner = scanner_init(expr,
@@ -143,8 +145,10 @@ normalize_expr(char *expr, bool preserve_space)
 	lasttok = 0;
 	lastloc = -1;
 	cmptok = 0;
+#if PG_VERSION_NUM >= 120000 && PG_VERSION_NUM < 140000
 	inExplain = false;
 	firstOpenParen = false;
+#endif
 
 	for (;;)
 	{
