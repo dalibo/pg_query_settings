@@ -163,19 +163,30 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
   uint64          queryid = 0;
 
 // Index scan
-  IndexFetchTableData * config_index_scan = NULL;
+  //IndexFetchTableData * config_index_scan = NULL;
+  IndexScanDesc         config_index_scan = NULL;
   bool                  index_scan_call_again = false;
+  bool                  all_dead = false;
   ItemPointerData       checktid;
   ItemPointerData       tmptid;
   TupleTableSlot *      slot = NULL;
   Relation              indexRel;
   IndexInfo *           indexInfo = NULL;
   List *                pgqs_index_list = NULL;
-  ListCell *            pgqs_first_indexOid = NULL;
+  Oid                   pgqs_first_indexOid = 0;
+  ListCell *            pgqs_first_index = NULL;
+  HeapTuple tuple;
+  ItemPointer tuple_tid;
+  TupleDesc tupdesc;
+  Datum indexScan_result;
+  bool  tuple_is_null;
 
   if (enabled)
   {
     config_relid = RelnameGetRelid(pgqs_config);
+    if (debug) elog(DEBUG1, "opening relation : %i", config_relid);
+    config_rel = table_open(config_relid, AccessShareLock);
+    if (debug && config_rel) elog(DEBUG1, "relation opened: %i", config_relid);
 
     if (OidIsValid(config_relid))
     {
@@ -197,32 +208,66 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       if (printQueryId) elog(NOTICE, "QueryID is '%li'", queryid);
       if (debug) elog(DEBUG1, "query's QueryID is '%li'", queryid);
 
-      if (debug) elog(DEBUG1, "opening relation : %li'", config_relid);
-      config_rel = table_open(config_relid, AccessShareLock);
-      
-      // config_scan = table_beginscan(config_rel, GetActiveSnapshot(), 0, NULL);
-
       // IndexScan begin
-      config_index_scan = table_index_fetch_begin(config_rel);
+      // if (debug) elog(DEBUG1, "table_index_fetch_begin on %i", config_relid);
+      // config_index_scan = table_index_fetch_begin(config_rel);
+      // if (debug && config_index_scan) elog(DEBUG1, "config_index_scan ok");
+      //
       // Get the indexes list
+      if (debug) elog(DEBUG1, "RelationGetIndexList");
       pgqs_index_list = RelationGetIndexList(config_rel);
+      if (debug && pgqs_index_list) elog(DEBUG1, "pgqs_index_list ok");
+
       // Get the first index
-      pgqs_first_indexOid = list_head((const List *) pgqs_index_list);
+      if (debug) elog(DEBUG1, "Getting the list head");
+      pgqs_first_index = list_head(pgqs_index_list);
+      pgqs_first_indexOid = pgqs_first_index->oid_value;
+      if (debug && pgqs_first_indexOid) elog(DEBUG1, "Got this index OID : %i",pgqs_first_indexOid);
 
-      tmptid = checktid;
+      /* Open the index */
+      if (debug) elog(DEBUG1, "Opening index %i",pgqs_first_indexOid);
+      indexRel = index_open(pgqs_first_indexOid, AccessShareLock);
+      if (debug && indexRel) elog(DEBUG1, "Got the Relation of %i",pgqs_first_indexOid);
 
-      if (!table_index_fetch_tuple( config_index_scan, &tmptid,SnapshotSelf,
-                                    slot, &index_scan_call_again, NULL))
-      {
-        /*
-        * All rows referenced by the index entry are dead, so skip */
-        ExecDropSingleTupleTableSlot(slot);
-        goto close;
-      }
-      /*
-       * Open the index */
-      indexRel = index_open(pgqs_first_indexOid->oid_value, AccessShareLock);
-      indexInfo = BuildIndexInfo(indexRel);
+      //Start the index scan
+      if (debug) elog(DEBUG1, "Starting the index scan");
+      config_index_scan = index_beginscan(config_rel,indexRel,SnapshotAny, 0, 0);
+
+
+      // Get the first tuple from the index scan
+      tuple_tid = index_getnext_tid(config_index_scan, ForwardScanDirection);
+
+    // If a tuple was found, convert it to a datum and return it
+    if (tuple != NULL) {
+        tupdesc = RelationGetDescr(indexRel);
+        indexScan_result = heap_getattr(tuple, 1, tupdesc, &tuple_is_null);
+    } else {
+        indexScan_result = (Datum) 0;
+    }
+
+    // Clean up
+    index_endscan(config_index_scan);
+    index_close(indexRel, AccessShareLock);
+
+      // BuildIndexInfo
+      //if (debug) elog(DEBUG1, "Getting the indexInfo");
+      //indexInfo = BuildIndexInfo(indexRel);
+      //if (debug && indexInfo) elog(DEBUG1, "Got the indexInfo");
+
+
+      // tmptid = checktid;
+      // if (debug) elog(DEBUG1, "Getting the first tuple");
+      // if (!table_index_fetch_tuple( config_index_scan, &tmptid,SnapshotSelf,
+      //                               slot, &index_scan_call_again, &all_dead))
+      // {
+      //   if (debug) elog(DEBUG1, "Can't fetch the first tuple");
+      //
+      //   /*
+      //   * All rows referenced by the index entry are dead, so skip */
+      //   ExecDropSingleTupleTableSlot(slot);
+      //   goto close;
+      // }
+
 
           /*
            * Typically the index won't have expressions, but if it does we need an
@@ -287,11 +332,12 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
           }
           PG_END_TRY();
 close:
-      // table_endscan(config_scan);
-      // table_close(config_rel, AccessShareLock);
+      //table_endscan(config_scan);
+      table_close(config_rel, AccessShareLock);
 
 // Index Scan End
-      table_index_fetch_end(config_index_scan);
+      // if (debug) elog(DEBUG1, "table_index_fetch_end");
+      // table_index_fetch_end(config_index_scan);
 
       if (rethrow)
       {
