@@ -163,10 +163,10 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
   IndexScanDesc         config_index_scan = NULL;
   bool                  index_scan_call_again = false;
   bool                  all_dead = false;
-  TupleTableSlot *      slot = NULL;
-  List *                pgqs_index_list = NULL;
+  TupleTableSlot        * slot = NULL;
+  List                  * pgqs_index_list = NULL;
   Oid                   pgqs_first_indexOid = 0;
-  ListCell *            pgqs_first_index = NULL;
+  ListCell              * pgqs_first_index = NULL;
 
 //index
   Relation              indexRel;
@@ -178,16 +178,16 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 //table
   Relation              config_rel;
   HeapTuple             config_tuple;
-  Oid                   config_relid;
+  Oid                   config_relid = 0;
   // ItemPointer           tuple_tid;
   HeapTuple             tuple;
   TupleDesc             tupdesc;
 
-  bool                  tuple_is_null=true;
+  bool                  tuple_is_null = true;
 
-  Datum *elem_values;
-  int num_results;
-  bool *elem_nulls;
+  Datum                 * elem_values = NULL;
+  int                   num_results = 0;
+  bool                  * elem_nulls = NULL;
 /*
 
 */
@@ -244,21 +244,34 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       //Start the index scan
       if (debug) elog(DEBUG1, "Starting the index scan");
       config_index_scan = index_beginscan(config_rel,indexRel,SnapshotAny, 0, 0);
+      if (debug && config_index_scan != NULL) elog(DEBUG1, "Index scan started");
 
 
       // Get the first tuple from the index scan
       if (debug) elog(DEBUG1, "Getting first index tuple");
+      // index_tuple_tid = index_getnext_tid(config_index_scan, ForwardScanDirection);
       index_tuple_tid = index_getnext_tid(config_index_scan, ForwardScanDirection);
+      index_tuple = heap_gettuple(config_rel,index_tuple_tid,SnapshotAny);
 
   //  while ( (index_tuple_tid = index_getnext_tid(config_index_scan, ForwardScanDirection)) != NULL ) {
-    if (index_tuple_tid != NULL){
+    if (index_tuple != NULL){
+      if (debug) elog(DEBUG1, "Got this index_tuple : %i %s", index_tuple_tid, index_tuple);
+
+      // fixme: allocate arrays
+      elem_values = palloc(sizeof(Datum) * 64);
+      elem_nulls = palloc(sizeof(bool) * 64);
+      if (debug) elog(DEBUG1, "Arrays allocated");
+
+      if (debug) elog(DEBUG1, "Getting index_tupdesc from indexRel");
       index_tupdesc = RelationGetDescr(indexRel);
-      elem_values[num_results] = heap_getattr(index_tuple, 1, tupdesc, &elem_nulls[num_results]);
-      num_results++;
+      if (debug) elog(DEBUG1, "Got index_tupdesc from indexRel");
+
+      if (debug) elog(DEBUG1, "Getting index_tuple attr #1");
+      // elem_values[num_results] = fastgetattr(index_tuple, 1, index_tupdesc, &elem_nulls[num_results]);
+      elem_values[num_results] = heap_getattr(index_tuple, 1, index_tupdesc, &elem_nulls[num_results]);
+      // num_results++;
 
     }
-    }
-
 
 
           /*
