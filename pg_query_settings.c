@@ -149,9 +149,6 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 #endif
 {
   PlannedStmt    *result;
-  Relation       config_rel;
-  HeapTuple      config_tuple;
-  Oid            config_relid;
   TableScanDesc  config_scan;
   Datum          data;
   bool           isnull;
@@ -163,27 +160,41 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
   uint64          queryid = 0;
 
 // Index scan
-  //IndexFetchTableData * config_index_scan = NULL;
   IndexScanDesc         config_index_scan = NULL;
   bool                  index_scan_call_again = false;
   bool                  all_dead = false;
-  ItemPointerData       checktid;
-  ItemPointerData       tmptid;
   TupleTableSlot *      slot = NULL;
-  Relation              indexRel;
-  IndexInfo *           indexInfo = NULL;
   List *                pgqs_index_list = NULL;
   Oid                   pgqs_first_indexOid = 0;
   ListCell *            pgqs_first_index = NULL;
-  HeapTuple tuple;
-  ItemPointer tuple_tid;
-  TupleDesc tupdesc;
-  Datum indexScan_result;
-  bool  tuple_is_null;
 
+//index
+  Relation              indexRel;
+  ItemPointer           index_tuple_tid;
+  HeapTuple             index_tuple;
+  TupleDesc             index_tupdesc;
+  Datum                 indexScan_result;
+
+//table
+  Relation              config_rel;
+  HeapTuple             config_tuple;
+  Oid                   config_relid;
+  // ItemPointer           tuple_tid;
+  HeapTuple             tuple;
+  TupleDesc             tupdesc;
+
+  bool                  tuple_is_null=true;
+
+  Datum *elem_values;
+  int num_results;
+  bool *elem_nulls;
+/*
+
+*/
   if (enabled)
   {
     config_relid = RelnameGetRelid(pgqs_config);
+
     if (debug) elog(DEBUG1, "opening relation : %i", config_relid);
     config_rel = table_open(config_relid, AccessShareLock);
     if (debug && config_rel) elog(DEBUG1, "relation opened: %i", config_relid);
@@ -191,6 +202,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
     if (OidIsValid(config_relid))
     {
 
+      // set query_st
 #if PG_VERSION_NUM < 130000
       char * query_st;
       query_st = pgqs_queryString;
@@ -198,7 +210,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       if (debug) elog(DEBUG1,"query_st=%s", query_st);
       if (debug) elog(DEBUG1,"pgqs_queryString=%s", pgqs_queryString);
 #endif
-
+    // Compute or not the queryid
 #if COMPUTE_LOCAL_QUERYID
     queryid = hash_query(query_st);
 #else
@@ -219,7 +231,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       if (debug && pgqs_index_list) elog(DEBUG1, "pgqs_index_list ok");
 
       // Get the first index
-      if (debug) elog(DEBUG1, "Getting the list head");
+      if (debug) elog(DEBUG1, "Getting the first index from list head");
       pgqs_first_index = list_head(pgqs_index_list);
       pgqs_first_indexOid = pgqs_first_index->oid_value;
       if (debug && pgqs_first_indexOid) elog(DEBUG1, "Got this index OID : %i",pgqs_first_indexOid);
@@ -235,73 +247,20 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 
 
       // Get the first tuple from the index scan
-      tuple_tid = index_getnext_tid(config_index_scan, ForwardScanDirection);
+      if (debug) elog(DEBUG1, "Getting first index tuple");
+      index_tuple_tid = index_getnext_tid(config_index_scan, ForwardScanDirection);
 
-    // If a tuple was found, convert it to a datum and return it
-    if (tuple != NULL) {
-        tupdesc = RelationGetDescr(indexRel);
-        indexScan_result = heap_getattr(tuple, 1, tupdesc, &tuple_is_null);
-    } else {
-        indexScan_result = (Datum) 0;
+  //  while ( (index_tuple_tid = index_getnext_tid(config_index_scan, ForwardScanDirection)) != NULL ) {
+    if (index_tuple_tid != NULL){
+      index_tupdesc = RelationGetDescr(indexRel);
+      elem_values[num_results] = heap_getattr(index_tuple, 1, tupdesc, &elem_nulls[num_results]);
+      num_results++;
+
+    }
     }
 
 
-      // BuildIndexInfo
-      //if (debug) elog(DEBUG1, "Getting the indexInfo");
-      //indexInfo = BuildIndexInfo(indexRel);
-      //if (debug && indexInfo) elog(DEBUG1, "Got the indexInfo");
 
-
-      // tmptid = checktid;
-      // if (debug) elog(DEBUG1, "Getting the first tuple");
-      // if (!table_index_fetch_tuple( config_index_scan, &tmptid,SnapshotSelf,
-      //                               slot, &index_scan_call_again, &all_dead))
-      // {
-      //   if (debug) elog(DEBUG1, "Can't fetch the first tuple");
-      //
-      //   /*
-      //   * All rows referenced by the index entry are dead, so skip */
-      //   ExecDropSingleTupleTableSlot(slot);
-      //   goto close;
-      // }
-
-
-          /*
-           * Typically the index won't have expressions, but if it does we need an
-           * EState to evaluate them.  We need it for exclusion constraints too,
-           * even if they are just on simple columns.
-           */
-            // estate = NULL;
-
-
-
-// -----------------------------
-{
-      // while ((config_tuple = heap_getnext(config_scan, ForwardScanDirection)) != NULL)
-      // {
-      //   /* Get the queryid in the currently read tuple. */
-      //   data = heap_getattr(config_tuple, 1, config_rel->rd_att, &isnull);
-      //   id = DatumGetInt64(data);
-      //   if (debug) elog(DEBUG1, "Config QueryID is '%li'", id);
-      //
-      //   /* Compare the queryid previously obtained with the queryid
-      //    * of the current query. */
-      //   if (queryid == id)
-      //   {
-      //
-      //     /* Get the name of the parameter (table field : 'param'). */
-      //     data = heap_getattr(config_tuple, 2, config_rel->rd_att, &isnull);
-      //     guc_name = pstrdup(TextDatumGetCString(data));
-      //
-      //     /* Get the value for the parameter (table field : 'value'). */
-      //     data = heap_getattr(config_tuple, 3, config_rel->rd_att, &isnull);
-      //     guc_value = pstrdup(TextDatumGetCString(data));
-      //
-      //     param = malloc(sizeof(parameter));
-      //     param->name = guc_name;
-      //
-      //     slist_push_head(&paramResetList, &param->node);
-}
           /*
            * Here we use the PostgreSQL try/catch mecanism so that when
            * SetConfigOption() returns an error, the current transaction
