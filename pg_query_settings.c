@@ -187,9 +187,9 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 
   bool                  tuple_is_null = true;
 
-  Datum                 * elem_values = NULL;
-  int                   num_results = 0;
-  bool                  * elem_nulls = NULL;
+  // Datum                 * elem_values = NULL;
+  // int                   num_results = 0;
+  // bool                  * elem_nulls = NULL;
 /*
 
 */
@@ -251,26 +251,25 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 
       // Get the first tuple from the index scan
       if (debug) elog(DEBUG1, "Getting first index tuple");
-        index_tuple_tid = index_getnext_tid(config_index_scan, ForwardScanDirection);
-      // FIXME:
-      // init a tuple with this tuple
-      // get the tuple
-      // if not the last of the HOT chain, scan the chain to the last...
+      index_tuple_tid = index_getnext_tid(config_index_scan, ForwardScanDirection);
 
-  //  while ( (index_tuple_tid = index_getnext_tid(config_index_scan, ForwardScanDirection)) != NULL ) {
-    if (index_tuple_tid != NULL){
-      blkno = ItemPointerGetBlockNumber(index_tuple_tid);
-      offnum = ItemPointerGetOffsetNumber(index_tuple_tid);
-      if (debug) elog(DEBUG1, "Got this index_tuple tid : %i/%i", blkno, offnum);
+      while ( index_tuple_tid != NULL){
+        blkno = ItemPointerGetBlockNumber(index_tuple_tid);
+        offnum = ItemPointerGetOffsetNumber(index_tuple_tid);
+        if (debug) elog(DEBUG1, "Got this index_tuple tid : %i/%i", blkno, offnum);
+        index_tuple_tid = index_getnext_tid(config_index_scan, ForwardScanDirection);
+
+      }
+      if (debug) elog(DEBUG1, "End");
 
       // fixme: allocate arrays
-      elem_values = palloc(sizeof(Datum) * 64);
-      elem_nulls = palloc(sizeof(bool) * 64);
-      if (debug) elog(DEBUG1, "Arrays allocated");
-
-      if (debug) elog(DEBUG1, "Getting index_tupdesc from indexRel");
-      index_tupdesc = RelationGetDescr(indexRel);
-      if (debug) elog(DEBUG1, "Got index_tupdesc from indexRel");
+      // elem_values = palloc(sizeof(Datum) * 64);
+      // elem_nulls = palloc(sizeof(bool) * 64);
+      // if (debug) elog(DEBUG1, "Arrays allocated");
+      //
+      // if (debug) elog(DEBUG1, "Getting index_tupdesc from indexRel");
+      // index_tupdesc = RelationGetDescr(indexRel);
+      // if (debug) elog(DEBUG1, "Got index_tupdesc from indexRel");
 
 
 
@@ -333,7 +332,7 @@ close:
         PG_RE_THROW();
       }
     }
-  }
+
 
   /*
    * Call next hook if it exists
