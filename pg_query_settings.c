@@ -24,8 +24,6 @@
 #include <utils/guc.h>
 #include <lib/ilist.h>
 
-#include "pgsp_queryid.h"
-
 /* This is a module :) */
 
 PG_MODULE_MAGIC;
@@ -39,6 +37,7 @@ PG_MODULE_MAGIC;
 #endif
 
 #if COMPUTE_LOCAL_QUERYID
+#include "pgsp_queryid.h"
 #include "parser/analyze.h"
 #endif
 
