@@ -179,9 +179,11 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
   Relation              config_rel;
   HeapTuple             config_tuple;
   Oid                   config_relid = 0;
-  // ItemPointer           tuple_tid;
+// ItemPointer           tuple_tid;
   HeapTuple             tuple;
   TupleDesc             tupdesc;
+  BlockNumber           blkno;
+  OffsetNumber          offnum;
 
   bool                  tuple_is_null = true;
 
@@ -233,7 +235,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       // Get the first index
       if (debug) elog(DEBUG1, "Getting the first index from list head");
       pgqs_first_index = list_head(pgqs_index_list);
-      pgqs_first_indexOid = pgqs_first_index->oid_value;
+      pgqs_first_indexOid = lfirst_oid(pgqs_first_index);
       if (debug && pgqs_first_indexOid) elog(DEBUG1, "Got this index OID : %i",pgqs_first_indexOid);
 
       /* Open the index */
@@ -249,13 +251,17 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 
       // Get the first tuple from the index scan
       if (debug) elog(DEBUG1, "Getting first index tuple");
-      // index_tuple_tid = index_getnext_tid(config_index_scan, ForwardScanDirection);
-      index_tuple_tid = index_getnext_tid(config_index_scan, ForwardScanDirection);
-      index_tuple = heap_gettuple(config_rel,index_tuple_tid,SnapshotAny);
+        index_tuple_tid = index_getnext_tid(config_index_scan, ForwardScanDirection);
+      // FIXME:
+      // init a tuple with this tuple
+      // get the tuple
+      // if not the last of the HOT chain, scan the chain to the last...
 
   //  while ( (index_tuple_tid = index_getnext_tid(config_index_scan, ForwardScanDirection)) != NULL ) {
-    if (index_tuple != NULL){
-      if (debug) elog(DEBUG1, "Got this index_tuple : %i %s", index_tuple_tid, index_tuple);
+    if (index_tuple_tid != NULL){
+      blkno = ItemPointerGetBlockNumber(index_tuple_tid);
+      offnum = ItemPointerGetOffsetNumber(index_tuple_tid);
+      if (debug) elog(DEBUG1, "Got this index_tuple tid : %i/%i", blkno, offnum);
 
       // fixme: allocate arrays
       elem_values = palloc(sizeof(Datum) * 64);
@@ -266,10 +272,17 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       index_tupdesc = RelationGetDescr(indexRel);
       if (debug) elog(DEBUG1, "Got index_tupdesc from indexRel");
 
-      if (debug) elog(DEBUG1, "Getting index_tuple attr #1");
+
+
+      // if (debug) elog(DEBUG1, "Getting index_tuple attr #1");
       // elem_values[num_results] = fastgetattr(index_tuple, 1, index_tupdesc, &elem_nulls[num_results]);
-      elem_values[num_results] = heap_getattr(index_tuple, 1, index_tupdesc, &elem_nulls[num_results]);
+      // elem_values[num_results] = heap_getattr(index_tuple, 1, index_tupdesc, &elem_nulls[num_results]);
       // num_results++;
+
+    }
+    else
+    {
+      if (debug) elog(DEBUG1, "index_tuple_tid is NULL");
 
     }
 
