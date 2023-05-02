@@ -180,7 +180,6 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
   HeapTuple             config_tuple;
   Oid                   config_relid = 0;
 // ItemPointer           tuple_tid;
-  HeapTuple             tuple;
   TupleDesc             tupdesc;
   BlockNumber           blkno;
   OffsetNumber          offnum;
@@ -191,6 +190,21 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
   int                   num_results = 0;
   bool                  * elem_nulls = NULL;
   HeapTupleData         tuple_data;
+  HeapTuple             tuple = &tuple_data;
+
+// ---------------
+  Snapshot          _snapshot = SnapshotAny ;
+  Buffer		        _buffer;
+  Buffer		        *userbuf;
+  ItemId		        _lp;
+  Page		          _page;
+  OffsetNumber      _offnum;
+  bool              _valid;
+  ItemPointer       _tid; //&(tuple->t_self);
+  bool              valid;
+
+
+// ---------------
 
 /*
 
@@ -202,6 +216,8 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
     if (debug) elog(DEBUG1, "opening relation : %i", config_relid);
     config_rel = table_open(config_relid, AccessShareLock);
     if (debug && config_rel) elog(DEBUG1, "relation opened: %i", config_relid);
+    if (debug) elog(DEBUG1, "getting the tuple desc");
+    tupdesc = RelationGetDescr(config_rel);
 
     if (OidIsValid(config_relid))
     {
@@ -261,24 +277,110 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
         offnum = ItemPointerGetOffsetNumber(index_tuple_tid);
 
         if (debug) elog(DEBUG1, "Got this index_tuple tid : %i/%i", blkno, offnum);
-        if (debug) elog(DEBUG1, "Setting tupple_data with tid");
-        ItemPointerCopy(index_tuple_tid, &tuple_data.t_self);
+        if (debug) elog(DEBUG1, "Setting tupple->t_self with tid");
+        ItemPointerCopy(index_tuple_tid, &(tuple->t_self) );
 
         if (debug) elog(DEBUG1, "Fetching the tuple");
         if (debug && config_rel) elog(DEBUG1, "Fetching the tuple: config_rel not NULL");
 
-        if (!heap_fetch(config_rel, SnapshotAny, &tuple_data, NULL, false)) {
-          if (debug) elog(DEBUG1, "NULL fetch !");
-            tuple_data.t_data = NULL;
-        }else
+        // heap_fetch
+        tuple = &tuple_data; //already initialised in declaration
+        /*
+	       * Fetch and pin the appropriate page of the relation.
+	       */
+        if (debug) elog(DEBUG1, "Fetch and pin the buffer");
+        _buffer = ReadBuffer(config_rel, ItemPointerGetBlockNumber(index_tuple_tid));
+
+        /*
+    	   * Need share lock on buffer to examine tuple commit status.
+    	  */
+        if (debug) elog(DEBUG1, "Locking the buffer");
+	      LockBuffer(_buffer, BUFFER_LOCK_SHARE);
+
+        if (debug) elog(DEBUG1, "Getting the page");
+        _page = BufferGetPage(_buffer);
+        if (debug) elog(DEBUG1, "test for old snapshot");
+        TestForOldSnapshot(_snapshot, config_rel, _page);
+
+        if (debug) elog(DEBUG1, "Getting the offset");
+        _offnum = ItemPointerGetOffsetNumber(index_tuple_tid);
+
+        /*
+        * We'd better check for out-of-range offnum in case of VACUUM since the
+        * TID was obtained.
+        */
+        if (_offnum < FirstOffsetNumber || _offnum > PageGetMaxOffsetNumber(_page))
+	      {
+		      LockBuffer(_buffer, BUFFER_LOCK_UNLOCK);
+		      ReleaseBuffer(_buffer);
+		      *userbuf = InvalidBuffer;
+		      tuple->t_data = NULL;
+          if (debug && config_rel) elog(DEBUG1, "offnum out of page");
+          goto close;
+	      }
+
+        /*
+         * get the item line pointer corresponding to the requested tid
+         */
+        _lp = PageGetItemId(_page, _offnum);
+
+        /*
+         * Must check for deleted tuple.
+         */
+        if (!ItemIdIsNormal(_lp))
+    	  {
+    		  LockBuffer(_buffer, BUFFER_LOCK_UNLOCK);
+    		  ReleaseBuffer(_buffer);
+    		  *userbuf = InvalidBuffer;
+    		  tuple->t_data = NULL;
+          goto close;
+    	  }
+
+        /*
+      	 * fill in *tuple fields
+      	 */
+      	tuple->t_data = (HeapTupleHeader) PageGetItem(_page, _lp);
+      	tuple->t_len = ItemIdGetLength(_lp);
+      	tuple->t_tableOid = RelationGetRelid(config_rel);
+
+        /*
+      	 * check tuple visibility, then release lock
+      	 */
+      	valid = HeapTupleSatisfiesVisibility(tuple, _snapshot, _buffer);
+        if (valid)
+      		PredicateLockTID( config_rel, &(tuple->t_self), _snapshot,
+      						          HeapTupleHeaderGetXmin(tuple->t_data));
+
+      	HeapCheckForSerializableConflictOut(valid, config_rel, tuple, _buffer, _snapshot);
+
+      	LockBuffer(_buffer, BUFFER_LOCK_UNLOCK);
+
+        if (valid)
         {
+          /*
+           * All checks passed, so return the tuple as valid. Caller is now
+           * responsible for releasing the buffer.
+           */
+          *userbuf = _buffer;
+          if (debug) elog(DEBUG1, "Buffer OK !");
           if (debug) elog(DEBUG1, "Tuple data fetched");
+          // what do we do with it ?
+          // get the value of field 1 put it in elem_values[]
+          elem_values[num_results] = heap_getattr(tuple, 1, tupdesc, &elem_nulls[num_results]);
         }
-        index_tuple_tid = index_getnext_tid(config_index_scan, ForwardScanDirection);
-      }
+
+
+       // *************************
+        // if (!heap_fetch(config_rel, SnapshotAny, tuple, NULL, false)) {
+        //   if (debug) elog(DEBUG1, "NULL fetch !");
+        //     tuple_data.t_data = NULL;
+        // }else
+        // {
+        // }
+        // index_tuple_tid = index_getnext_tid(config_index_scan, ForwardScanDirection);
+
 
       // elem_values[num_results] = fastgetattr(index_tuple, 1, index_tupdesc, &elem_nulls[num_results]);
-      // elem_values[num_results] = heap_getattr(index_tuple, 1, index_tupdesc, &elem_nulls[num_results]);
         // num_results++;
 
       if (debug) elog(DEBUG1, "End");
@@ -291,12 +393,12 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 
 
 
-    }
-    else
-    {
-      if (debug) elog(DEBUG1, "index_tuple_tid is NULL");
-
-    }
+    // }
+    // else
+    // {
+    //   if (debug) elog(DEBUG1, "index_tuple_tid is NULL");
+    //
+    // }
 
 
           /*
@@ -345,6 +447,9 @@ close:
         PG_RE_THROW();
       }
     }
+  }
+
+  }
 
 
   /*
@@ -369,6 +474,9 @@ close:
 
   return result;
 }
+
+
+/* ************************************************ */
 
 /*
  * executor hook function: this is where we reset all our GUC for a specific
