@@ -245,7 +245,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       pgqs_index_list = RelationGetIndexList(config_rel);
       if (debug && pgqs_index_list) elog(DEBUG1, "pgqs_index_list ok");
 
-      // Get the first index
+      // Get the first and /should be/ last index
       if (debug) elog(DEBUG1, "Getting the first index from list head");
       pgqs_first_index = list_head(pgqs_index_list);
       pgqs_first_indexOid = lfirst_oid(pgqs_first_index);
@@ -303,7 +303,11 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
         TestForOldSnapshot(_snapshot, config_rel, _page);
 
         if (debug) elog(DEBUG1, "Getting the offset");
+        if (debug) elog(DEBUG1, " CRASH");
+
         _offnum = ItemPointerGetOffsetNumber(index_tuple_tid);
+        // _offnum = (index_tuple_tid)->ip_posid;
+        if (debug) elog(DEBUG1, " got the offnum");
 
         /*
         * We'd better check for out-of-range offnum in case of VACUUM since the
@@ -311,6 +315,8 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
         */
         if (_offnum < FirstOffsetNumber || _offnum > PageGetMaxOffsetNumber(_page))
 	      {
+          if (debug) elog(DEBUG1, " locking buffer");
+
 		      LockBuffer(_buffer, BUFFER_LOCK_UNLOCK);
 		      ReleaseBuffer(_buffer);
 		      *userbuf = InvalidBuffer;
@@ -318,6 +324,8 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
           if (debug && config_rel) elog(DEBUG1, "offnum out of page");
           goto close;
 	      }
+        if (debug && config_rel) elog(DEBUG1, "offnum in page");
+
 
         /*
          * get the item line pointer corresponding to the requested tid
