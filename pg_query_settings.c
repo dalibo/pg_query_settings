@@ -314,7 +314,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
         * TID was obtained.
         */
         if (_offnum < FirstOffsetNumber || _offnum > PageGetMaxOffsetNumber(_page))
-	      {
+	    {
           if (debug) elog(DEBUG1, " locking buffer");
 
 		      LockBuffer(_buffer, BUFFER_LOCK_UNLOCK);
@@ -323,13 +323,14 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 		      tuple->t_data = NULL;
           if (debug && config_rel) elog(DEBUG1, "offnum out of page");
           goto close;
-	      }
+	    }
         if (debug && config_rel) elog(DEBUG1, "offnum in page");
 
 
         /*
          * get the item line pointer corresponding to the requested tid
          */
+        if (debug && config_rel) elog(DEBUG1, "Get the item line pointer");
         _lp = PageGetItemId(_page, _offnum);
 
         /*
@@ -337,6 +338,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
          */
         if (!ItemIdIsNormal(_lp))
     	  {
+              if (debug) elog(DEBUG1, "Deleted tuple! avorting.");
     		  LockBuffer(_buffer, BUFFER_LOCK_UNLOCK);
     		  ReleaseBuffer(_buffer);
     		  *userbuf = InvalidBuffer;
@@ -347,21 +349,34 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
         /*
       	 * fill in *tuple fields
       	 */
+        if (debug) elog(DEBUG1, "Filling the tuple fields:");
+        if (debug) elog(DEBUG1, "  t_data");
       	tuple->t_data = (HeapTupleHeader) PageGetItem(_page, _lp);
+        if (debug) elog(DEBUG1, "  t_len");
       	tuple->t_len = ItemIdGetLength(_lp);
+        if (debug) elog(DEBUG1, "  t_tableOid");
       	tuple->t_tableOid = RelationGetRelid(config_rel);
+        if (debug) elog(DEBUG1, "Tuple fields filled");
 
         /*
       	 * check tuple visibility, then release lock
       	 */
+        if (debug) elog(DEBUG1, "Checking tuple visibility...");
+        //  always true because called with _snapshot = SnapshotAny
       	valid = HeapTupleSatisfiesVisibility(tuple, _snapshot, _buffer);
-        if (valid)
-      		PredicateLockTID( config_rel, &(tuple->t_self), _snapshot,
-      						          HeapTupleHeaderGetXmin(tuple->t_data));
+        if (valid){
+          if (debug) elog(DEBUG1, "visibility Check ok");
+      	  PredicateLockTID( config_rel, &(tuple->t_self), _snapshot,
+      					    HeapTupleHeaderGetXmin(tuple->t_data));
+        }
 
+        if (debug) elog(DEBUG1, "Check for serializable conflict");
       	HeapCheckForSerializableConflictOut(valid, config_rel, tuple, _buffer, _snapshot);
+        if (debug) elog(DEBUG1, "serializable conflict: ok");
 
+        if (debug) elog(DEBUG1, "Locking buffer");
       	LockBuffer(_buffer, BUFFER_LOCK_UNLOCK);
+        if (debug) elog(DEBUG1, "buffer locked");
 
         if (valid)
         {
@@ -369,44 +384,19 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
            * All checks passed, so return the tuple as valid. Caller is now
            * responsible for releasing the buffer.
            */
+          if (debug) elog(DEBUG1, "All checks passed");
           *userbuf = _buffer;
           if (debug) elog(DEBUG1, "Buffer OK !");
           if (debug) elog(DEBUG1, "Tuple data fetched");
           // what do we do with it ?
           // get the value of field 1 put it in elem_values[]
           elem_values[num_results] = heap_getattr(tuple, 1, tupdesc, &elem_nulls[num_results]);
+          num_results++;
+        }else{
+          if (debug) elog(DEBUG1, "");
         }
 
-
-       // *************************
-        // if (!heap_fetch(config_rel, SnapshotAny, tuple, NULL, false)) {
-        //   if (debug) elog(DEBUG1, "NULL fetch !");
-        //     tuple_data.t_data = NULL;
-        // }else
-        // {
-        // }
-        // index_tuple_tid = index_getnext_tid(config_index_scan, ForwardScanDirection);
-
-
-      // elem_values[num_results] = fastgetattr(index_tuple, 1, index_tupdesc, &elem_nulls[num_results]);
-        // num_results++;
-
       if (debug) elog(DEBUG1, "End");
-
-
-      // if (debug) elog(DEBUG1, "Getting index_tupdesc from indexRel");
-      // index_tupdesc = RelationGetDescr(indexRel);
-      // if (debug) elog(DEBUG1, "Got index_tupdesc from indexRel");
-
-
-
-
-    // }
-    // else
-    // {
-    //   if (debug) elog(DEBUG1, "index_tuple_tid is NULL");
-    //
-    // }
 
 
           /*
@@ -421,7 +411,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
           PG_TRY();
           {
             elog(DEBUG1, "Setting %s = %s", guc_name,guc_value);
-            // SetConfigOption(guc_name, guc_value, PGC_USERSET, PGC_S_SESSION);
+            SetConfigOption(guc_name, guc_value, PGC_USERSET, PGC_S_SESSION);
           }
           PG_CATCH();
           {
@@ -447,8 +437,8 @@ close:
       table_close(config_rel, AccessShareLock);
 
 // Index Scan End
-      // if (debug) elog(DEBUG1, "table_index_fetch_end");
-      // table_index_fetch_end(config_index_scan);
+      if (debug) elog(DEBUG1, "table_index_fetch_end");
+      table_index_fetch_end(config_index_scan);
 
       if (rethrow)
       {
