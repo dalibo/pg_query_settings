@@ -22,6 +22,7 @@
 #include <executor/executor.h>
 #include <optimizer/planner.h>
 #include <storage/bufmgr.h>
+#include <storage/predicate.h>
 #include <utils/builtins.h>
 #include <utils/guc.h>
 #include <lib/ilist.h>
@@ -148,22 +149,22 @@ execPlantuner(Query *parse, int cursorOptions, ParamListInfo boundp)
 execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListInfo boundp)
 #endif
 {
-  PlannedStmt    *result;
-  TableScanDesc  config_scan;
-  Datum          data;
-  bool           isnull;
-  bool           rethrow = false;
-  int64          id;
-  char           *guc_value = NULL;
-  char           *guc_name = NULL;
-  parameter      *param = NULL;
-  uint64          queryid = 0;
+  PlannedStmt           *result;
+  // TableScanDesc  config_scan;
+  // Datum          data;
+  // bool           isnull;
+  bool                  rethrow = false;
+  // int64          id;
+  char                  *guc_value = NULL;
+  char                  *guc_name = NULL;
+  // parameter      *param = NULL;
+  uint64                queryid = 0;
 
 // Index scan
   IndexScanDesc         config_index_scan = NULL;
-  bool                  index_scan_call_again = false;
-  bool                  all_dead = false;
-  TupleTableSlot        * slot = NULL;
+  // bool                  index_scan_call_again = false;
+  // bool                  all_dead = false;
+  // TupleTableSlot        * slot = NULL;
   List                  * pgqs_index_list = NULL;
   Oid                   pgqs_first_indexOid = 0;
   ListCell              * pgqs_first_index = NULL;
@@ -171,39 +172,41 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 //index
   Relation              indexRel;
   ItemPointer           index_tuple_tid;
-  HeapTuple             index_tuple;
-  TupleDesc             index_tupdesc;
-  Datum                 indexScan_result;
+  // HeapTuple             index_tuple;
+  // TupleDesc             index_tupdesc;
+  // Datum                 indexScan_result;
 
 //table
   Relation              config_rel;
-  HeapTuple             config_tuple;
+  // HeapTuple             config_tuple;
   Oid                   config_relid = 0;
 // ItemPointer           tuple_tid;
   TupleDesc             tupdesc;
   BlockNumber           blkno;
   OffsetNumber          offnum;
 
-  bool                  tuple_is_null = true;
+  // bool                  tuple_is_null = true;
 
   Datum                 * elem_values = NULL;
+  Datum                 * elem_gucname = NULL;
+  Datum                 * elem_gucvalue = NULL;
   int                   num_results = 0;
   bool                  * elem_nulls = NULL;
   HeapTupleData         tuple_data;
   HeapTuple             tuple = &tuple_data;
 
 // ---------------
-  Snapshot          _snapshot = SnapshotAny ;
-  Buffer		        _buffer;
-  Buffer		        *userbuf;
-  ItemId		        _lp;
-  Page		          _page;
-  OffsetNumber      _offnum;
-  bool              _valid;
-  ItemPointer       _tid; //&(tuple->t_self);
-  bool              valid;
+  Snapshot              _snapshot = SnapshotAny ;
+  Buffer		            _buffer;
+  Buffer		            *userbuf = NULL;
+  ItemId		            _lp;
+  Page		              _page;
+  OffsetNumber          _offnum;
+  // bool                  _valid;
+  // ItemPointer           _tid; //&(tuple->t_self);
+  bool                  valid;
 
-
+  // Datum                 current_tuple;
 // ---------------
 
 /*
@@ -314,7 +317,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
         * TID was obtained.
         */
         if (_offnum < FirstOffsetNumber || _offnum > PageGetMaxOffsetNumber(_page))
-	    {
+	       {
           if (debug) elog(DEBUG1, " locking buffer");
 
 		      LockBuffer(_buffer, BUFFER_LOCK_UNLOCK);
@@ -323,7 +326,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 		      tuple->t_data = NULL;
           if (debug && config_rel) elog(DEBUG1, "offnum out of page");
           goto close;
-	    }
+	       }
         if (debug && config_rel) elog(DEBUG1, "offnum in page");
 
 
@@ -372,7 +375,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 
         if (debug) elog(DEBUG1, "Check for serializable conflict");
       	HeapCheckForSerializableConflictOut(valid, config_rel, tuple, _buffer, _snapshot);
-        if (debug) elog(DEBUG1, "serializable conflict: ok");
+        if (debug) elog(DEBUG1, "serializable conflict tested");
 
         if (debug) elog(DEBUG1, "Locking buffer");
       	LockBuffer(_buffer, BUFFER_LOCK_UNLOCK);
@@ -385,17 +388,34 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
            * responsible for releasing the buffer.
            */
           if (debug) elog(DEBUG1, "All checks passed");
-          *userbuf = _buffer;
+
+          // FIXME
+          // *userbuf = _buffer;
           if (debug) elog(DEBUG1, "Buffer OK !");
           if (debug) elog(DEBUG1, "Tuple data fetched");
           // what do we do with it ?
           // get the value of field 1 put it in elem_values[]
           elem_values[num_results] = heap_getattr(tuple, 1, tupdesc, &elem_nulls[num_results]);
-          num_results++;
-        }else{
-          if (debug) elog(DEBUG1, "");
-        }
 
+          // test if the queryid is found
+          if (elem_values[num_results] == queryid)
+          {
+            if (debug) elog(DEBUG1, "getting guc name");
+            //FIXME
+            elem_gucname[num_results] = heap_getattr(tuple, 2, tupdesc, &elem_nulls[num_results]);
+            if (debug) elog(DEBUG1, "getting guc value");
+            elem_gucvalue[num_results] = heap_getattr(tuple, 3, tupdesc, &elem_nulls[num_results]);
+            num_results++;
+          }else{
+            if (debug) elog(DEBUG1, "skip");
+
+          }
+
+        }else{
+          if (debug) elog(DEBUG1, "Tuple not valid");
+          goto close;
+        }
+      }
       if (debug) elog(DEBUG1, "End");
 
 
@@ -425,6 +445,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
             goto close;
           }
           PG_END_TRY();
+
 close:
       // Clean up
       if (debug) elog(DEBUG1, "Ending the index scan");
@@ -437,8 +458,8 @@ close:
       table_close(config_rel, AccessShareLock);
 
 // Index Scan End
-      if (debug) elog(DEBUG1, "table_index_fetch_end");
-      table_index_fetch_end(config_index_scan);
+     // if (debug) elog(DEBUG1, "table_index_fetch_end");
+     // table_index_fetch_end(config_index_scan);
 
       if (rethrow)
       {
@@ -447,7 +468,7 @@ close:
     }
   }
 
-  }
+
 
 
   /*
