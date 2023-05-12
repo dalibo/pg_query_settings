@@ -66,6 +66,7 @@ static const char* pgqs_config ="pgqs_config";
 typedef struct parameter
 {
   char *name;
+  const char *oldValue;
   slist_node node;
 } parameter;
 
@@ -123,7 +124,7 @@ static void DestroyPRList(bool reset)
     {
       if (debug) elog(DEBUG1, "Reset guc %s", param->name);
 
-      SetConfigOption(param->name, NULL, PGC_USERSET, PGC_S_SESSION);
+      SetConfigOption(param->name, param->oldValue, PGC_USERSET, PGC_S_SESSION);
     }
     slist_delete_current(&iter);
     free(param);
@@ -211,6 +212,9 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 
           param = malloc(sizeof(parameter));
           param->name = guc_name;
+
+          /* Get and store current value for the parameter. */
+          param->oldValue = GetConfigOption(guc_name, true, false);
 
           slist_push_head(&paramResetList, &param->node);
 
