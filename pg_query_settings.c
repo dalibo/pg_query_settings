@@ -212,6 +212,9 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 /*
 
 */
+  if (debug) elog(DEBUG1, "Entering execPlanTuner");
+
+
   if (enabled)
   {
     config_relid = RelnameGetRelid(pgqs_config);
@@ -266,6 +269,8 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 
       // Allocate 64×Datum and 64×bool arrays
       elem_values = palloc(sizeof(Datum) * 64);
+      elem_gucname = palloc(sizeof(Datum) * 64);
+      elem_gucvalue = palloc(sizeof(Datum) * 64);
       elem_nulls = palloc(sizeof(bool) * 64);
       if (debug) elog(DEBUG1, "Arrays allocated");
 
@@ -306,7 +311,6 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
         TestForOldSnapshot(_snapshot, config_rel, _page);
 
         if (debug) elog(DEBUG1, "Getting the offset");
-        if (debug) elog(DEBUG1, " CRASH");
 
         _offnum = ItemPointerGetOffsetNumber(index_tuple_tid);
         // _offnum = (index_tuple_tid)->ip_posid;
@@ -395,19 +399,33 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
           if (debug) elog(DEBUG1, "Tuple data fetched");
           // what do we do with it ?
           // get the value of field 1 put it in elem_values[]
-          elem_values[num_results] = heap_getattr(tuple, 1, tupdesc, &elem_nulls[num_results]);
+          if (debug) elog(DEBUG1, "getting queryid");
+          // elem_values[num_results] = heap_getattr(tuple, 1, tupdesc, &elem_nulls[num_results]);
+          elem_values[num_results] = heap_getattr(tuple, 1, config_rel->rd_att, &elem_nulls[num_results]);
 
           // test if the queryid is found
           if (elem_values[num_results] == queryid)
           {
+            if (debug) elog(DEBUG1, "--------------------");
+            if (debug) elog(DEBUG1, "queryid=%li",elem_values[num_results]);
+
+            // get the value of field 2 put it in elem_gucname
             if (debug) elog(DEBUG1, "getting guc name");
             //FIXME
-            elem_gucname[num_results] = heap_getattr(tuple, 2, tupdesc, &elem_nulls[num_results]);
+            elem_gucname[num_results] = heap_getattr(tuple, 2, config_rel->rd_att, &elem_nulls[num_results]);
+            if (debug) elog(DEBUG1, "got guc name:%s",pstrdup(TextDatumGetCString(elem_gucname[num_results])));
+
+            // get the value of field 2 put it in elem_gucvalue[]
             if (debug) elog(DEBUG1, "getting guc value");
-            elem_gucvalue[num_results] = heap_getattr(tuple, 3, tupdesc, &elem_nulls[num_results]);
+            elem_gucvalue[num_results] = heap_getattr(tuple, 3, config_rel->rd_att, &elem_nulls[num_results]);
+            if (debug) elog(DEBUG1, "got guc value:%s",pstrdup(TextDatumGetCString(elem_gucvalue[num_results])));
+            if (debug) elog(DEBUG1, "--------------------");
+
             num_results++;
+
           }else{
             if (debug) elog(DEBUG1, "skip");
+            elem_values[num_results] = 0;
 
           }
 
@@ -415,7 +433,10 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
           if (debug) elog(DEBUG1, "Tuple not valid");
           goto close;
         }
-      }
+        if (debug) elog(DEBUG1, "--------------------");
+
+      } // while
+
       if (debug) elog(DEBUG1, "End");
 
 
