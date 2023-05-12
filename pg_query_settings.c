@@ -181,7 +181,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
   // HeapTuple             config_tuple;
   Oid                   config_relid = 0;
 // ItemPointer           tuple_tid;
-  TupleDesc             tupdesc;
+  // TupleDesc             tupdesc;
   BlockNumber           blkno;
   OffsetNumber          offnum;
 
@@ -222,8 +222,8 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
     if (debug) elog(DEBUG1, "opening relation : %i", config_relid);
     config_rel = table_open(config_relid, AccessShareLock);
     if (debug && config_rel) elog(DEBUG1, "relation opened: %i", config_relid);
-    if (debug) elog(DEBUG1, "getting the tuple desc");
-    tupdesc = RelationGetDescr(config_rel);
+    // if (debug) elog(DEBUG1, "getting the tuple desc");
+    // tupdesc = RelationGetDescr(config_rel);
 
     if (OidIsValid(config_relid))
     {
@@ -433,7 +433,8 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
           if (debug) elog(DEBUG1, "Tuple not valid");
           goto close;
         }
-        if (debug) elog(DEBUG1, "--------------------");
+
+        index_tuple_tid = index_getnext_tid(config_index_scan, ForwardScanDirection);
 
       } // while
 
