@@ -293,6 +293,9 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 
         // heap_fetch
         tuple = &tuple_data; //already initialised in declaration
+
+
+
         /*
 	       * Fetch and pin the appropriate page of the relation.
 	       */
