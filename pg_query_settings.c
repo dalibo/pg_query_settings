@@ -452,8 +452,9 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
            */
           PG_TRY();
           {
+            // parcours des tableaux
             elog(DEBUG1, "Setting %s = %s", guc_name,guc_value);
-            SetConfigOption(guc_name, guc_value, PGC_USERSET, PGC_S_SESSION);
+            // SetConfigOption(guc_name, guc_value, PGC_USERSET, PGC_S_SESSION);
           }
           PG_CATCH();
           {
