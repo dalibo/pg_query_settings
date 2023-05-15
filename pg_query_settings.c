@@ -484,6 +484,9 @@ close:
      // if (debug) elog(DEBUG1, "table_index_fetch_end");
      // table_index_fetch_end(config_index_scan);
 
+     // PREVENT _buffer memory leak
+     ReleaseBuffer(_buffer);
+
       if (rethrow)
       {
         PG_RE_THROW();
