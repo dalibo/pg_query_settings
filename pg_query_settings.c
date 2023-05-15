@@ -267,7 +267,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       config_index_scan = index_beginscan(config_rel,indexRel,SnapshotAny, 0, 0);
       if (debug && config_index_scan != NULL) elog(DEBUG1, "Index scan started");
 
-      // Allocate 64×Datum and 64×bool arrays
+      // Allocate 3×64×Datum and + 64×bool arrays
       elem_values = palloc(sizeof(Datum) * 64);
       elem_gucname = palloc(sizeof(Datum) * 64);
       elem_gucvalue = palloc(sizeof(Datum) * 64);
