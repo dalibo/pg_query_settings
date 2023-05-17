@@ -198,7 +198,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 // ---------------
   Snapshot              _snapshot = SnapshotAny ;
   Buffer		            _buffer;
-  Buffer		            *userbuf = NULL;
+  // Buffer		            *userbuf = NULL;
   ItemId		            _lp;
   Page		              _page;
   OffsetNumber          _offnum;
@@ -212,14 +212,14 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 /*
 
 */
-  if (debug) elog(DEBUG1, "Entering execPlanTuner");
+  if (debug) elog(DEBUG1, "0 Entering execPlanTuner");
 
 
   if (enabled)
   {
     config_relid = RelnameGetRelid(pgqs_config);
 
-    if (debug) elog(DEBUG1, "opening relation : %i", config_relid);
+    if (debug) elog(DEBUG1, "1 opening table relation : %i", config_relid);
     config_rel = table_open(config_relid, AccessShareLock);
     if (debug && config_rel) elog(DEBUG1, "relation opened: %i", config_relid);
     // if (debug) elog(DEBUG1, "getting the tuple desc");
@@ -231,6 +231,8 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       // set query_st
 #if PG_VERSION_NUM < 130000
       char * query_st;
+
+      //refactoring needed here
       query_st = pgqs_queryString;
 
       if (debug) elog(DEBUG1,"query_st=%s", query_st);
@@ -258,7 +260,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       if (debug && pgqs_first_indexOid) elog(DEBUG1, "Got this index OID : %i",pgqs_first_indexOid);
 
       /* Open the index */
-      if (debug) elog(DEBUG1, "Opening index %i",pgqs_first_indexOid);
+      if (debug) elog(DEBUG1, "2 Opening index %i",pgqs_first_indexOid);
       indexRel = index_open(pgqs_first_indexOid, AccessShareLock);
       if (debug && indexRel) elog(DEBUG1, "Got the Relation of %i",pgqs_first_indexOid);
 
@@ -329,7 +331,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 
 		      LockBuffer(_buffer, BUFFER_LOCK_UNLOCK);
 		      ReleaseBuffer(_buffer);
-		      *userbuf = InvalidBuffer;
+		      // *userbuf = InvalidBuffer;
 		      tuple->t_data = NULL;
           if (debug && config_rel) elog(DEBUG1, "offnum out of page");
           goto close;
@@ -351,7 +353,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
               if (debug) elog(DEBUG1, "Deleted tuple! avorting.");
     		  LockBuffer(_buffer, BUFFER_LOCK_UNLOCK);
     		  ReleaseBuffer(_buffer);
-    		  *userbuf = InvalidBuffer;
+    		  // *userbuf = InvalidBuffer;
     		  tuple->t_data = NULL;
           goto close;
     	  }
@@ -376,8 +378,17 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       	valid = HeapTupleSatisfiesVisibility(tuple, _snapshot, _buffer);
         if (valid){
           if (debug) elog(DEBUG1, "visibility Check ok");
-      	  PredicateLockTID( config_rel, &(tuple->t_self), _snapshot,
-      					    HeapTupleHeaderGetXmin(tuple->t_data));
+
+#if PG_VERSION_NUM > 140000
+            //FIXME same proto ?
+            // does not seem to exist in v12 ?!
+            PredicateLockTID( config_rel, &(tuple->t_self), _snapshot,
+        					    HeapTupleHeaderGetXmin(tuple->t_data));
+#else
+            PredicateLockTuple( config_rel, &(tuple->t_self), _snapshot,
+      					     HeapTupleHeaderGetXmin(tuple->t_data));
+#endif
+
         }
 
         if (debug) elog(DEBUG1, "Check for serializable conflict");
@@ -441,7 +452,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 
       } // while
 
-      if (debug) elog(DEBUG1, "End");
+      if (debug) elog(DEBUG1, "End of the index scan");
 
 
           /*
@@ -476,11 +487,11 @@ close:
       // Clean up
       if (debug) elog(DEBUG1, "Ending the index scan");
       index_endscan(config_index_scan);
-      if (debug) elog(DEBUG1, "Closing index");
+      if (debug) elog(DEBUG1, "2 Closing index");
       index_close(indexRel, AccessShareLock);
 
       // table_endscan(config_scan);
-      if (debug) elog(DEBUG1, "Closing pgqs_config");
+      if (debug) elog(DEBUG1, "1 Closing table pgqs_config");
       table_close(config_rel, AccessShareLock);
 
 // Index Scan End
@@ -489,6 +500,18 @@ close:
 
      // PREVENT _buffer memory leak
      ReleaseBuffer(_buffer);
+
+     if (debug) elog(DEBUG1, "freeing elem_values");
+     pfree(elem_values);
+
+     if (debug) elog(DEBUG1, "freeing elem_nulls");
+     pfree(elem_nulls);
+
+     if (debug) elog(DEBUG1, "freeing elem_gucname");
+     pfree(elem_gucname);
+
+     if (debug) elog(DEBUG1, "freeing elem_gucvalue");
+     pfree(elem_gucvalue);
 
       if (rethrow)
       {
