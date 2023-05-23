@@ -150,21 +150,13 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 #endif
 {
   PlannedStmt           *result;
-  // TableScanDesc  config_scan;
-  // Datum          data;
-  // bool           isnull;
   bool                  rethrow = false;
-  // int64          id;
   char                  *guc_value = NULL;
   char                  *guc_name = NULL;
-  // parameter      *param = NULL;
   uint64                queryid = 0;
 
 // Index scan
   IndexScanDesc         config_index_scan = NULL;
-  // bool                  index_scan_call_again = false;
-  // bool                  all_dead = false;
-  // TupleTableSlot        * slot = NULL;
   List                  * pgqs_index_list = NULL;
   Oid                   pgqs_first_indexOid = 0;
   ListCell              * pgqs_first_index = NULL;
@@ -172,20 +164,13 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 //index
   Relation              indexRel;
   ItemPointer           index_tuple_tid;
-  // HeapTuple             index_tuple;
-  // TupleDesc             index_tupdesc;
-  // Datum                 indexScan_result;
 
 //table
   Relation              config_rel;
-  // HeapTuple             config_tuple;
   Oid                   config_relid = 0;
-// ItemPointer           tuple_tid;
-  // TupleDesc             tupdesc;
   BlockNumber           blkno;
   OffsetNumber          offnum;
 
-  // bool                  tuple_is_null = true;
 
   Datum                 * elem_values = NULL;
   Datum                 * elem_gucname = NULL;
@@ -198,20 +183,13 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 // ---------------
   Snapshot              _snapshot = SnapshotAny ;
   Buffer		            _buffer;
-  // Buffer		            *userbuf = NULL;
   ItemId		            _lp;
   Page		              _page;
   OffsetNumber          _offnum;
-  // bool                  _valid;
-  // ItemPointer           _tid; //&(tuple->t_self);
   bool                  valid;
 
-  // Datum                 current_tuple;
 // ---------------
 
-/*
-
-*/
   if (debug) elog(DEBUG1, "0 Entering execPlanTuner");
 
 
@@ -259,13 +237,17 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       pgqs_first_indexOid = lfirst_oid(pgqs_first_index);
       if (debug && pgqs_first_indexOid) elog(DEBUG1, "Got this index OID : %i",pgqs_first_indexOid);
 
+      if (debug ) elog(DEBUG1, "freeing pgqs_index_list");
+      pfree(pgqs_index_list);
+
       /* Open the index */
       if (debug) elog(DEBUG1, "2 Opening index %i",pgqs_first_indexOid);
       indexRel = index_open(pgqs_first_indexOid, AccessShareLock);
       if (debug && indexRel) elog(DEBUG1, "Got the Relation of %i",pgqs_first_indexOid);
 
+
       //Start the index scan
-      if (debug) elog(DEBUG1, "Starting the index scan");
+      if (debug) elog(DEBUG1, "3 Starting the index scan");
       config_index_scan = index_beginscan(config_rel,indexRel,SnapshotAny, 0, 0);
       if (debug && config_index_scan != NULL) elog(DEBUG1, "Index scan started");
 
@@ -318,7 +300,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
         if (debug) elog(DEBUG1, "Getting the offset");
 
         _offnum = ItemPointerGetOffsetNumber(index_tuple_tid);
-        // _offnum = (index_tuple_tid)->ip_posid;
+        // _offnum = (index_tuple_tid)->ip_posid; // also
         if (debug) elog(DEBUG1, " got the offnum");
 
         /*
@@ -453,6 +435,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       } // while
 
       if (debug) elog(DEBUG1, "End of the index scan");
+      if (debug) elog(DEBUG1, "numresults=%i",num_results);
 
 
           /*
@@ -485,11 +468,10 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 
 close:
       // Clean up
-      if (debug) elog(DEBUG1, "Ending the index scan");
+      if (debug) elog(DEBUG1, "3 Ending the index scan");
       index_endscan(config_index_scan);
       if (debug) elog(DEBUG1, "2 Closing index");
       index_close(indexRel, AccessShareLock);
-
       // table_endscan(config_scan);
       if (debug) elog(DEBUG1, "1 Closing table pgqs_config");
       table_close(config_rel, AccessShareLock);
@@ -498,18 +480,18 @@ close:
      // if (debug) elog(DEBUG1, "table_index_fetch_end");
      // table_index_fetch_end(config_index_scan);
 
-     // PREVENT _buffer memory leak
-     ReleaseBuffer(_buffer);
+     // release _buffer for each result to prevent memory leak
+     if (debug) elog(DEBUG1, "Releasing _buffer (×%i)", num_results);
+     for (int count = 1; count <= num_results; count++){
+       ReleaseBuffer(_buffer);
+     }
 
-     if (debug) elog(DEBUG1, "freeing elem_values");
+     if (debug) elog(DEBUG1, "freeing arrays");
      pfree(elem_values);
-
      if (debug) elog(DEBUG1, "freeing elem_nulls");
      pfree(elem_nulls);
-
      if (debug) elog(DEBUG1, "freeing elem_gucname");
      pfree(elem_gucname);
-
      if (debug) elog(DEBUG1, "freeing elem_gucvalue");
      pfree(elem_gucvalue);
 
