@@ -315,10 +315,10 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 		      LockBuffer(_buffer, BUFFER_LOCK_UNLOCK);
 		      ReleaseBuffer(_buffer);
 		      tuple->t_data = NULL;
-          if (debug && config_rel) elog(DEBUG1, "offnum out of page");
+          if (debug && config_rel) elog(DEBUG1, "KO: offnum out of page");
           goto close;
 	       }
-        if (debug && config_rel) elog(DEBUG1, "offnum in page");
+        if (debug && config_rel) elog(DEBUG1, "OK: offnum in page");
         // we have a tuple
         num_tuples++;
 
@@ -333,7 +333,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
          */
         if (!ItemIdIsNormal(_lp))
     	  {
-              if (debug) elog(DEBUG1, "Deleted tuple! avorting.");
+              if (debug) elog(DEBUG1, "Deleted tuple! aborting.");
     		  LockBuffer(_buffer, BUFFER_LOCK_UNLOCK);
     		  ReleaseBuffer(_buffer);
     		  // *userbuf = InvalidBuffer;
@@ -397,8 +397,8 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
           // what do we do with it ?
           // get the value of field 1 put it in elem_values[]
           if (debug) elog(DEBUG1, "getting queryid");
-          // elem_values[num_results] = heap_getattr(tuple, 1, tupdesc, &elem_nulls[num_results]);
-          elem_values[num_results] = heap_getattr(tuple, 1, config_rel->rd_att, &elem_nulls[num_results]);
+          elem_values[num_results] = heap_getattr(tuple, 1,
+            config_rel->rd_att, &elem_nulls[num_results]);
 
           // test if the queryid is found
           if (elem_values[num_results] == queryid)
@@ -409,8 +409,10 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
             // get the value of field 2 put it in elem_gucname
             if (debug) elog(DEBUG1, "getting guc name");
             //FIXME
-            elem_gucname[num_results] = heap_getattr(tuple, 2, config_rel->rd_att, &elem_nulls[num_results]);
-            if (debug) elog(DEBUG1, "got guc name:%s",pstrdup(TextDatumGetCString(elem_gucname[num_results])));
+            elem_gucname[num_results] = heap_getattr(tuple, 2,
+              config_rel->rd_att, &elem_nulls[num_results]);
+            if (debug) elog(DEBUG1, "got guc name:%s",
+              pstrdup(TextDatumGetCString(elem_gucname[num_results])));
 
             // get the value of field 2 put it in elem_gucvalue[]
             if (debug) elog(DEBUG1, "getting guc value");
