@@ -179,6 +179,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
   bool                  * elem_nulls = NULL;
   HeapTupleData         tuple_data;
   HeapTuple             tuple = &tuple_data;
+  int                   num_tuples = 0;
 
 // ---------------
   Snapshot              _snapshot = SnapshotAny ;
@@ -309,17 +310,17 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
         */
         if (_offnum < FirstOffsetNumber || _offnum > PageGetMaxOffsetNumber(_page))
 	       {
-          if (debug) elog(DEBUG1, " locking buffer");
+          if (debug) elog(DEBUG1, " unlocking buffer");
 
 		      LockBuffer(_buffer, BUFFER_LOCK_UNLOCK);
 		      ReleaseBuffer(_buffer);
-		      // *userbuf = InvalidBuffer;
 		      tuple->t_data = NULL;
           if (debug && config_rel) elog(DEBUG1, "offnum out of page");
           goto close;
 	       }
         if (debug && config_rel) elog(DEBUG1, "offnum in page");
-
+        // we have a tuple
+        num_tuples++;
 
         /*
          * get the item line pointer corresponding to the requested tid
@@ -482,7 +483,7 @@ close:
 
      // release _buffer for each result to prevent memory leak
      if (debug) elog(DEBUG1, "Releasing _buffer (×%i)", num_results);
-     for (int count = 1; count <= num_results; count++){
+     for (int count = 0; count < num_tuples; count++){
        ReleaseBuffer(_buffer);
      }
 
