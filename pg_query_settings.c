@@ -414,8 +414,10 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 
             // get the value of field 2 put it in elem_gucvalue[]
             if (debug) elog(DEBUG1, "getting guc value");
-            elem_gucvalue[num_results] = heap_getattr(tuple, 3, config_rel->rd_att, &elem_nulls[num_results]);
-            if (debug) elog(DEBUG1, "got guc value:%s",pstrdup(TextDatumGetCString(elem_gucvalue[num_results])));
+            elem_gucvalue[num_results] = heap_getattr(tuple, 3,
+              config_rel->rd_att, &elem_nulls[num_results]);
+            if (debug) elog(DEBUG1, "got guc value:%s",
+              pstrdup(TextDatumGetCString(elem_gucvalue[num_results])));
             if (debug) elog(DEBUG1, "--------------------");
 
             num_results++;
