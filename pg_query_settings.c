@@ -378,9 +378,13 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       	HeapCheckForSerializableConflictOut(valid, config_rel, tuple, _buffer, _snapshot);
         if (debug) elog(DEBUG1, "serializable conflict tested");
 
-        if (debug) elog(DEBUG1, "Locking buffer");
+        if (debug) elog(DEBUG1, "UNLocking buffer");
       	LockBuffer(_buffer, BUFFER_LOCK_UNLOCK);
-        if (debug) elog(DEBUG1, "buffer locked");
+        if (debug) elog(DEBUG1, "buffer unlocked");
+        // avoid memory leak by releasing _buffer after each tuple
+        ReleaseBuffer(_buffer);
+        if (debug) elog(DEBUG1, "buffer Released");
+
 
         if (valid)
         {
@@ -434,7 +438,6 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
           if (debug) elog(DEBUG1, "Tuple not valid");
           goto close;
         }
-
         index_tuple_tid = index_getnext_tid(config_index_scan, ForwardScanDirection);
 
       } // while
@@ -486,10 +489,11 @@ close:
      // table_index_fetch_end(config_index_scan);
 
      // release _buffer for each result to prevent memory leak
-     if (debug) elog(DEBUG1, "Releasing _buffer (×%i)", num_results);
-     for (int count = 0; count < num_tuples; count++){
-       ReleaseBuffer(_buffer);
-     }
+
+     // if (debug) elog(DEBUG1, "Releasing _buffer (×%i)", num_results);
+     // for (int count = 0; count < num_tuples; count++){
+     //   ReleaseBuffer(_buffer);
+     // }
 
      if (debug) elog(DEBUG1, "freeing arrays");
      pfree(elem_values);
