@@ -54,7 +54,7 @@ static bool    debug = false;
 static bool    printQueryId = false;
 static slist_head paramResetList = SLIST_STATIC_INIT(paramResetList);
 
-#if COMPUTE_LOCAL_QUERYID
+#if PG_VERSION_NUM < 130000
 static char * pgqs_queryString = NULL;
 #endif
 
@@ -74,7 +74,7 @@ typedef struct parameter
 static planner_hook_type prevHook  = NULL;
 static ExecutorEnd_hook_type prev_ExecutorEnd = NULL;
 
-#if COMPUTE_LOCAL_QUERYID
+#if PG_VERSION_NUM < 130000
 static post_parse_analyze_hook_type prev_post_parse_analyze_hook = NULL;
 static void pgqs_post_parse_analyze(ParseState *pstate, Query *query);
 #endif
@@ -82,7 +82,7 @@ static void pgqs_post_parse_analyze(ParseState *pstate, Query *query);
 // -----------------------------------------------------------------
 /* Functions */
 
-#if COMPUTE_LOCAL_QUERYID
+#if PG_VERSION_NUM < 130000
 
 static void pgqs_post_parse_analyze(ParseState *pstate, Query *query)
 {
@@ -177,9 +177,9 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 #endif
 
 #if COMPUTE_LOCAL_QUERYID
-    queryid = hash_query(query_st);
+      queryid = hash_query(query_st);
 #else
-    queryid = parse->queryId;
+      queryid = parse->queryId;
 #endif
 
       if (printQueryId) elog(NOTICE, "QueryID is '%li'", queryid);
@@ -263,18 +263,17 @@ close:
   if (prevHook)
 
 #if PG_VERSION_NUM < 130000
-  result = prevHook(parse, cursorOptions, boundp);
-
+    result = prevHook(parse, cursorOptions, boundp);
 #else
-  result = prevHook(parse, query_st, cursorOptions, boundp);
+    result = prevHook(parse, query_st, cursorOptions, boundp);
 #endif
 
   else
 
 #if PG_VERSION_NUM < 130000
-      result = standard_planner(parse, cursorOptions, boundp);
+    result = standard_planner(parse, cursorOptions, boundp);
 #else
-      result = standard_planner(parse, query_st, cursorOptions, boundp);
+    result = standard_planner(parse, query_st, cursorOptions, boundp);
 #endif
 
   return result;
@@ -361,7 +360,7 @@ _PG_init(void)
     ExecutorEnd_hook = PlanTuner_ExecutorEnd;
   }
 
-#if COMPUTE_LOCAL_QUERYID
+#if PG_VERSION_NUM < 130000
   prev_post_parse_analyze_hook = post_parse_analyze_hook;
   post_parse_analyze_hook = pgqs_post_parse_analyze;
 #endif
@@ -381,10 +380,10 @@ _PG_fini(void)
   planner_hook = prevHook;
   ExecutorEnd_hook = prev_ExecutorEnd;
 
-  #if COMPUTE_LOCAL_QUERYID
-    if (debug) elog(DEBUG1,"Recovering post_parse_analyze_hook");
-    post_parse_analyze_hook = prev_post_parse_analyze_hook;
-  #endif
+#if PG_VERSION_NUM < 130000
+  if (debug) elog(DEBUG1,"Recovering post_parse_analyze_hook");
+  post_parse_analyze_hook = prev_post_parse_analyze_hook;
+#endif
 
   if (debug) elog(DEBUG1,"Exiting _PG_fini()");
 
