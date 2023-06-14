@@ -16,6 +16,9 @@
 
 #include <access/heapam.h>
 #include <catalog/namespace.h>
+#if PG_VERSION_NUM < 130000
+#include <catalog/pg_type.h>
+#endif
 #include <miscadmin.h>
 #include <executor/executor.h>
 #include <optimizer/planner.h>
@@ -23,10 +26,10 @@
 #include <utils/builtins.h>
 #include <utils/guc.h>
 #include <lib/ilist.h>
+#include <executor/spi.h>
 
 #include "pgsp_queryid.h"
 
-#include "executor/spi.h"
 
 /* This is a module :) */
 
@@ -163,7 +166,9 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
   char           *guc_value = NULL;
   char           *guc_name = NULL;
   parameter      *param = NULL;
-
+#if PG_VERSION_NUM < 130000
+        char * query_st;
+#endif
   ListCell       *l;
   int     ret = 0;
   int64   rows = 0;
@@ -198,7 +203,6 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
         userQuery = true;
 
 #if PG_VERSION_NUM < 130000
-        char * query_st;
         query_st = pgqs_queryString;
 
         if (debug) elog(DEBUG1,"query_st=%s", query_st);
