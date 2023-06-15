@@ -2,7 +2,7 @@
 \echo Use "CREATE EXTENSION pg_query_settings" to load this file. \quit
 
 -- create our configuration table
-CREATE TABLE IF NOT EXISTS pgqs_config (queryid BIGINT, param TEXT, value TEXT NOT NULL,
+CREATE TABLE pgqs_config (queryid BIGINT, param TEXT, value TEXT NOT NULL,
   PRIMARY KEY(queryid, param));
 
 -- mark it as dumpable
