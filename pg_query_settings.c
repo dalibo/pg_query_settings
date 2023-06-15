@@ -344,6 +344,13 @@ _PG_init(void)
       NULL
       );
 
+  /* Reserve the GUC prefix */
+#if PG_VERSION_NUM < 150000
+  EmitWarningsOnPlaceholders("pg_query_settings");
+#else
+  MarkGUCPrefixReserved("pg_query_settings");
+#endif
+
   if (debug) elog(DEBUG1,"Entering _PG_init()");
 
   /* Set our two hooks */
