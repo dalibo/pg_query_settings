@@ -26,6 +26,8 @@
 #include <utils/builtins.h>
 #include <utils/guc.h>
 #include <lib/ilist.h>
+#include <access/genam.h>
+#include <utils/fmgroids.h>
 
 #include "pgsp_queryid.h"
 
@@ -151,44 +153,41 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 {
   PlannedStmt           *result;
   bool                  rethrow = false;
-  char                  *guc_value = NULL;
-  char                  *guc_name = NULL;
+  // char                  *guc_value = NULL;
+  // char                  *guc_name = NULL;
   uint64                queryid = 0;
 
 // Index scan
-  IndexScanDesc         config_index_scan = NULL;
+  // IndexScanDesc         config_index_scan = NULL;
   List                  * pgqs_index_list = NULL;
   Oid                   pgqs_first_indexOid = 0;
   ListCell              * pgqs_first_index = NULL;
 
 //index
-  Relation              indexRel;
-  ItemPointer           index_tuple_tid;
+  // Relation              indexRel;
+  // ItemPointer           index_tuple_tid;
 
 //table
   Relation              config_rel;
   Oid                   config_relid = 0;
-  BlockNumber           blkno;
-  OffsetNumber          offnum;
+  // BlockNumber           blkno;
+  // OffsetNumber          offnum;
 
 
   Datum                 * elem_values = NULL;
   Datum                 * elem_gucname = NULL;
   Datum                 * elem_gucvalue = NULL;
   int                   num_results = 0;
+  int                   _indice = 0;
   bool                  * elem_nulls = NULL;
-  HeapTupleData         tuple_data;
-  HeapTuple             tuple = &tuple_data;
-  int                   num_tuples = 0;
+  HeapTuple            config_tuple;
+  // HeapTuple            tuple;
 
 // ---------------
-  Snapshot              _snapshot = SnapshotAny ;
-  Buffer		            _buffer;
-  ItemId		            _lp;
-  Page		              _page;
-  OffsetNumber          _offnum;
-  bool                  valid;
+  Snapshot              _snapshot = NULL; // last snapshot ?
 
+  SysScanDesc           _scandesc;
+  ScanKeyData           _entry[1];
 // ---------------
 
   if (debug) elog(DEBUG1, "0 Entering execPlanTuner");
@@ -196,18 +195,20 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 
   if (enabled)
   {
+    // getting the oid of our relation
     config_relid = RelnameGetRelid(pgqs_config);
 
     if (debug) elog(DEBUG1, "1 opening table relation : %i", config_relid);
+
+    // opening the relation
     config_rel = table_open(config_relid, AccessShareLock);
+
     if (debug && config_rel) elog(DEBUG1, "relation opened: %i", config_relid);
-    // if (debug) elog(DEBUG1, "getting the tuple desc");
-    // tupdesc = RelationGetDescr(config_rel);
 
     if (OidIsValid(config_relid))
     {
 
-      // set query_st
+      // set query_st regarding the pg version
 #if PG_VERSION_NUM < 130000
       char * query_st;
 
@@ -227,221 +228,76 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       if (printQueryId) elog(NOTICE, "QueryID is '%li'", queryid);
       if (debug) elog(DEBUG1, "query's QueryID is '%li'", queryid);
 
-      // Get the indexes list
+
       if (debug) elog(DEBUG1, "RelationGetIndexList");
+
+      // Get the indexes list of our relation
       pgqs_index_list = RelationGetIndexList(config_rel);
+
       if (debug && pgqs_index_list) elog(DEBUG1, "pgqs_index_list ok");
 
-      // Get the first and /should be/ last index
       if (debug) elog(DEBUG1, "Getting the first index from list head");
+
+      // Get the first and /should be/ last index of our relation
       pgqs_first_index = list_head(pgqs_index_list);
       pgqs_first_indexOid = lfirst_oid(pgqs_first_index);
+
       if (debug && pgqs_first_indexOid) elog(DEBUG1, "Got this index OID : %i",pgqs_first_indexOid);
 
+
       if (debug ) elog(DEBUG1, "freeing pgqs_index_list");
+
+      // we dont need this list anymore
       pfree(pgqs_index_list);
 
-      /* Open the index */
-      if (debug) elog(DEBUG1, "2 Opening index %i",pgqs_first_indexOid);
-      indexRel = index_open(pgqs_first_indexOid, AccessShareLock);
-      if (debug && indexRel) elog(DEBUG1, "Got the Relation of %i",pgqs_first_indexOid);
+      if (debug) elog(DEBUG1, "Initialising the scan");
+      ScanKeyInit(&_entry[0], 1, BTEqualStrategyNumber, F_INT4EQ, Int64GetDatum(queryid));
 
+      if (debug) elog(DEBUG1, "Starting the index scan");
+      _scandesc = systable_beginscan(  config_rel,
+                                       pgqs_first_indexOid,
+                                       true,
+                                       _snapshot,
+                                      1,
+                                      _entry);
 
-      //Start the index scan
-      if (debug) elog(DEBUG1, "3 Starting the index scan");
-      config_index_scan = index_beginscan(config_rel,indexRel,SnapshotAny, 0, 0);
-      if (debug && config_index_scan != NULL) elog(DEBUG1, "Index scan started");
+      if (debug && _scandesc != NULL) elog(DEBUG1, "Index scan started");
 
-      // Allocate 3×64×Datum and + 64×bool arrays
       elem_values = palloc(sizeof(Datum) * 64);
       elem_gucname = palloc(sizeof(Datum) * 64);
       elem_gucvalue = palloc(sizeof(Datum) * 64);
       elem_nulls = palloc(sizeof(bool) * 64);
+
       if (debug) elog(DEBUG1, "Arrays allocated");
 
-      // Scan
-      // Get the first tuple from the index scan
-      if (debug) elog(DEBUG1, "Getting first index tuple");
-      index_tuple_tid = index_getnext_tid(config_index_scan, ForwardScanDirection);
+      if (debug) elog(DEBUG1, "Getting the first tuple");
 
-      while ( index_tuple_tid != NULL){
+      while ((config_tuple = systable_getnext(_scandesc)) != NULL)
+      {
+        if (debug) elog(DEBUG1, "--------------------");
+        if (debug) elog(DEBUG1, "Tuple #%i", num_results);
 
-        blkno = ItemPointerGetBlockNumber(index_tuple_tid);
-        offnum = ItemPointerGetOffsetNumber(index_tuple_tid);
+        if (debug) elog(DEBUG1, "Getting field 1");
+        elem_values[num_results] =
+          heap_getattr(config_tuple, 1, config_rel->rd_att, &elem_nulls[num_results]);
+        if (debug) elog(DEBUG1, "queryid=%li",elem_values[num_results]);
 
-        if (debug) elog(DEBUG1, "Got this index_tuple tid : %i/%i", blkno, offnum);
-        if (debug) elog(DEBUG1, "Setting tupple->t_self with tid");
-        ItemPointerCopy(index_tuple_tid, &(tuple->t_self) );
+        if (debug) elog(DEBUG1, "getting guc name");
+        elem_gucname[num_results] =
+          heap_getattr(config_tuple, 2, config_rel->rd_att, &elem_nulls[num_results]);
+        if (debug) elog(DEBUG1, "got guc name:%s",
+          pstrdup(TextDatumGetCString(elem_gucname[num_results])));
 
-        if (debug) elog(DEBUG1, "Fetching the tuple");
-        if (debug && config_rel) elog(DEBUG1, "Fetching the tuple: config_rel not NULL");
-
-        // heap_fetch
-        tuple = &tuple_data; //already initialised in declaration
-
-
-
-        /*
-	       * Fetch and pin the appropriate page of the relation.
-	       */
-        if (debug) elog(DEBUG1, "Fetch and pin the buffer");
-        _buffer = ReadBuffer(config_rel, ItemPointerGetBlockNumber(index_tuple_tid));
-
-        /*
-    	   * Need share lock on buffer to examine tuple commit status.
-    	  */
-        if (debug) elog(DEBUG1, "Locking the buffer");
-	      LockBuffer(_buffer, BUFFER_LOCK_SHARE);
-
-        if (debug) elog(DEBUG1, "Getting the page");
-        _page = BufferGetPage(_buffer);
-        if (debug) elog(DEBUG1, "test for old snapshot");
-        TestForOldSnapshot(_snapshot, config_rel, _page);
-
-        if (debug) elog(DEBUG1, "Getting the offset");
-
-        _offnum = ItemPointerGetOffsetNumber(index_tuple_tid);
-        // _offnum = (index_tuple_tid)->ip_posid; // also
-        if (debug) elog(DEBUG1, " got the offnum");
-
-        /*
-        * We'd better check for out-of-range offnum in case of VACUUM since the
-        * TID was obtained.
-        */
-        if (_offnum < FirstOffsetNumber || _offnum > PageGetMaxOffsetNumber(_page))
-	       {
-          if (debug) elog(DEBUG1, " unlocking buffer");
-
-		      LockBuffer(_buffer, BUFFER_LOCK_UNLOCK);
-		      ReleaseBuffer(_buffer);
-		      tuple->t_data = NULL;
-          if (debug && config_rel) elog(DEBUG1, "KO: offnum out of page");
-          goto close;
-	       }
-        if (debug && config_rel) elog(DEBUG1, "OK: offnum in page");
-        // we have a tuple
-        num_tuples++;
-
-        /*
-         * get the item line pointer corresponding to the requested tid
-         */
-        if (debug && config_rel) elog(DEBUG1, "Get the item line pointer");
-        _lp = PageGetItemId(_page, _offnum);
-
-        /*
-         * Must check for deleted tuple.
-         */
-        if (!ItemIdIsNormal(_lp))
-    	  {
-              if (debug) elog(DEBUG1, "Deleted tuple! aborting.");
-    		  LockBuffer(_buffer, BUFFER_LOCK_UNLOCK);
-    		  ReleaseBuffer(_buffer);
-    		  // *userbuf = InvalidBuffer;
-    		  tuple->t_data = NULL;
-          goto close;
-    	  }
-
-        /*
-      	 * fill in *tuple fields
-      	 */
-        if (debug) elog(DEBUG1, "Filling the tuple fields:");
-        if (debug) elog(DEBUG1, "  t_data");
-      	tuple->t_data = (HeapTupleHeader) PageGetItem(_page, _lp);
-        if (debug) elog(DEBUG1, "  t_len");
-      	tuple->t_len = ItemIdGetLength(_lp);
-        if (debug) elog(DEBUG1, "  t_tableOid");
-      	tuple->t_tableOid = RelationGetRelid(config_rel);
-        if (debug) elog(DEBUG1, "Tuple fields filled");
-
-        /*
-      	 * check tuple visibility, then release lock
-      	 */
-        if (debug) elog(DEBUG1, "Checking tuple visibility...");
-        //  always true because called with _snapshot = SnapshotAny
-      	valid = HeapTupleSatisfiesVisibility(tuple, _snapshot, _buffer);
-        if (valid){
-          if (debug) elog(DEBUG1, "visibility Check ok");
-
-#if PG_VERSION_NUM > 140000
-            //FIXME same proto ?
-            // does not seem to exist in v12 ?!
-            PredicateLockTID( config_rel, &(tuple->t_self), _snapshot,
-        					    HeapTupleHeaderGetXmin(tuple->t_data));
-#else
-            PredicateLockTuple( config_rel, &(tuple->t_self), _snapshot,
-      					     HeapTupleHeaderGetXmin(tuple->t_data));
-#endif
-
-        }
-
-        if (debug) elog(DEBUG1, "Check for serializable conflict");
-      	HeapCheckForSerializableConflictOut(valid, config_rel, tuple, _buffer, _snapshot);
-        if (debug) elog(DEBUG1, "serializable conflict tested");
-
-        if (debug) elog(DEBUG1, "UNLocking buffer");
-      	LockBuffer(_buffer, BUFFER_LOCK_UNLOCK);
-        if (debug) elog(DEBUG1, "buffer unlocked");
-        // avoid memory leak by releasing _buffer after each tuple
-        ReleaseBuffer(_buffer);
-        if (debug) elog(DEBUG1, "buffer Released");
+        if (debug) elog(DEBUG1, "getting guc value");
+        elem_gucvalue[num_results] =
+          heap_getattr(config_tuple, 3, config_rel->rd_att, &elem_nulls[num_results]);
+        if (debug) elog(DEBUG1, "got guc value:%s",
+          pstrdup(TextDatumGetCString(elem_gucvalue[num_results])));
 
 
-        if (valid)
-        {
-          /*
-           * All checks passed, so return the tuple as valid. Caller is now
-           * responsible for releasing the buffer.
-           */
-          if (debug) elog(DEBUG1, "All checks passed");
-
-          // FIXME
-          // *userbuf = _buffer;
-          if (debug) elog(DEBUG1, "Buffer OK !");
-          if (debug) elog(DEBUG1, "Tuple data fetched");
-          // what do we do with it ?
-          // get the value of field 1 put it in elem_values[]
-          if (debug) elog(DEBUG1, "getting queryid");
-          elem_values[num_results] = heap_getattr(tuple, 1,
-            config_rel->rd_att, &elem_nulls[num_results]);
-
-          // test if the queryid is found
-          if (elem_values[num_results] == queryid)
-          {
-            if (debug) elog(DEBUG1, "--------------------");
-            if (debug) elog(DEBUG1, "queryid=%li",elem_values[num_results]);
-
-            // get the value of field 2 put it in elem_gucname
-            if (debug) elog(DEBUG1, "getting guc name");
-            //FIXME
-            elem_gucname[num_results] = heap_getattr(tuple, 2,
-              config_rel->rd_att, &elem_nulls[num_results]);
-            if (debug) elog(DEBUG1, "got guc name:%s",
-              pstrdup(TextDatumGetCString(elem_gucname[num_results])));
-
-            // get the value of field 2 put it in elem_gucvalue[]
-            if (debug) elog(DEBUG1, "getting guc value");
-            elem_gucvalue[num_results] = heap_getattr(tuple, 3,
-              config_rel->rd_att, &elem_nulls[num_results]);
-            if (debug) elog(DEBUG1, "got guc value:%s",
-              pstrdup(TextDatumGetCString(elem_gucvalue[num_results])));
-            if (debug) elog(DEBUG1, "--------------------");
-
-            num_results++;
-
-          }else{
-            if (debug) elog(DEBUG1, "skip");
-            elem_values[num_results] = 0;
-
-          }
-
-        }else{
-          if (debug) elog(DEBUG1, "Tuple not valid");
-          goto close;
-        }
-        index_tuple_tid = index_getnext_tid(config_index_scan, ForwardScanDirection);
-
-      } // while
-
+        num_results++;
+      } // while we have tuples
+      if (debug) elog(DEBUG1, "--------------------");
       if (debug) elog(DEBUG1, "End of the index scan");
       if (debug) elog(DEBUG1, "numresults=%i",num_results);
 
@@ -458,9 +314,20 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
           PG_TRY();
           {
             // parcours des tableaux
-            elog(DEBUG1, "Setting %s = %s", guc_name,guc_value);
-            // SetConfigOption(guc_name, guc_value, PGC_USERSET, PGC_S_SESSION);
+            for (_indice = 0; _indice < num_results; _indice++){
+              elog(DEBUG1, "Setting %s = %s",
+                pstrdup(TextDatumGetCString(elem_gucname[_indice]) ),
+                pstrdup(TextDatumGetCString(elem_gucvalue[_indice]) )
+              );
+              SetConfigOption(
+                pstrdup(TextDatumGetCString(elem_gucname[_indice])),
+                pstrdup(TextDatumGetCString(elem_gucvalue[_indice])),
+                PGC_USERSET,
+                PGC_S_SESSION
+              );
+            }
           }
+
           PG_CATCH();
           {
             rethrow = true;
@@ -475,41 +342,27 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
           PG_END_TRY();
 
 close:
-      // Clean up
-      if (debug) elog(DEBUG1, "3 Ending the index scan");
-      index_endscan(config_index_scan);
-      if (debug) elog(DEBUG1, "2 Closing index");
-      index_close(indexRel, AccessShareLock);
-      // table_endscan(config_scan);
-      if (debug) elog(DEBUG1, "1 Closing table pgqs_config");
-      table_close(config_rel, AccessShareLock);
+    if (debug) elog(DEBUG1, "Endscan");
+    systable_endscan(_scandesc);
 
-// Index Scan End
-     // if (debug) elog(DEBUG1, "table_index_fetch_end");
-     // table_index_fetch_end(config_index_scan);
+    if (debug) elog(DEBUG1, "Closing table pgqs_config");
+    table_close(config_rel, AccessShareLock);
 
-     // release _buffer for each result to prevent memory leak
+    if (debug) elog(DEBUG1, "freeing arrays");
+    pfree(elem_values);
+    if (debug) elog(DEBUG1, "freeing elem_nulls");
+    pfree(elem_nulls);
+    if (debug) elog(DEBUG1, "freeing elem_gucname");
+    pfree(elem_gucname);
+    if (debug) elog(DEBUG1, "freeing elem_gucvalue");
+    pfree(elem_gucvalue);
 
-     // if (debug) elog(DEBUG1, "Releasing _buffer (×%i)", num_results);
-     // for (int count = 0; count < num_tuples; count++){
-     //   ReleaseBuffer(_buffer);
-     // }
-
-     if (debug) elog(DEBUG1, "freeing arrays");
-     pfree(elem_values);
-     if (debug) elog(DEBUG1, "freeing elem_nulls");
-     pfree(elem_nulls);
-     if (debug) elog(DEBUG1, "freeing elem_gucname");
-     pfree(elem_gucname);
-     if (debug) elog(DEBUG1, "freeing elem_gucvalue");
-     pfree(elem_gucvalue);
-
-      if (rethrow)
-      {
-        PG_RE_THROW();
-      }
+    if (rethrow)
+    {
+      PG_RE_THROW();
     }
   }
+}
 
 
 
