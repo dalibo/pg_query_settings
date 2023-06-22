@@ -250,8 +250,11 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       // we dont need this list anymore
       pfree(pgqs_index_list);
 
-      if (debug) elog(DEBUG1, "Initialising the scan");
-      ScanKeyInit(&_entry[0], 1, BTEqualStrategyNumber, F_INT4EQ, Int64GetDatum(queryid));
+      if (debug) elog(DEBUG1, "Initialising the scan F_INT8EQ");
+
+      // ScanKeyInit(&_entry[0], 1, BTEqualStrategyNumber, F_OIDEQ, Int64GetDatum(queryid));
+      // ScanKeyInit(&_entry[0], 1, BTEqualStrategyNumber, F_INT4EQ, Int64GetDatum(queryid));
+      ScanKeyInit(&_entry[0], 1, BTEqualStrategyNumber, F_INT8EQ, Int64GetDatum(queryid));
 
       if (debug) elog(DEBUG1, "Starting the index scan");
       _scandesc = systable_beginscan(  config_rel,
