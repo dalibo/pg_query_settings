@@ -60,7 +60,6 @@ static bool    printQueryId = false;
 static slist_head paramResetList = SLIST_STATIC_INIT(paramResetList);
 
 static int     cmp_tracking = 0;
-static bool    userQuery = false;
 static uint64  queryid = 0;
 
 #if PG_VERSION_NUM < 130000
@@ -200,7 +199,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       /* Means that the user query doesn't contain the pgqs_config table itself. */
       if (cmp_tracking == 0)
       {
-        userQuery = true;
+        cmp_tracking++;
 
 #if PG_VERSION_NUM < 130000
         query_st = pgqs_queryString;
@@ -279,7 +278,6 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
                  * may have successfully been set. Let's just destroy the list.
                  */
                 cmp_tracking = 0;
-                userQuery = false;
                 DestroyPRList(false);
                 SPI_finish();
                 goto close;
@@ -338,7 +336,6 @@ pgqs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count, bo
   PG_CATCH();
   {
     cmp_tracking = 0;
-    userQuery = false;
     DestroyPRList(false);
     PG_RE_THROW();
   }
@@ -352,19 +349,9 @@ pgqs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count, bo
 static void
 PlanTuner_ExecutorEnd(QueryDesc *q)
 {
-  cmp_tracking++;
-  /*
-   *  If either of the two conditions below are true, we need to restore
-   *  the GUC values :
-   *   - cmp_tracking=3 when user query as exectued and doesn't contain pgqs_config
-   *     table,
-   *   - cmp_tracking=2 AND userQuery=false when user query uses pgqs_config
-   *     table.
-   */
-  if (cmp_tracking == 3 || (!userQuery && cmp_tracking == 2))
+  cmp_tracking--;
+  if (cmp_tracking == 0)
   {
-    cmp_tracking = 0;
-    userQuery = false;
     DestroyPRList(true);
   }
 
@@ -380,7 +367,6 @@ PlanTuner_ExecutorEnd(QueryDesc *q)
   PG_CATCH();
   {
     cmp_tracking = 0;
-    userQuery = false;
     DestroyPRList(false);
     PG_RE_THROW();
   }
