@@ -153,25 +153,16 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 {
   PlannedStmt           *result;
   bool                  rethrow = false;
-  // char                  *guc_value = NULL;
-  // char                  *guc_name = NULL;
   uint64                queryid = 0;
 
-// Index scan
-  // IndexScanDesc         config_index_scan = NULL;
+// Index
   List                  * pgqs_index_list = NULL;
   Oid                   pgqs_first_indexOid = 0;
   ListCell              * pgqs_first_index = NULL;
 
-//index
-  // Relation              indexRel;
-  // ItemPointer           index_tuple_tid;
-
 //table
   Relation              config_rel;
   Oid                   config_relid = 0;
-  // BlockNumber           blkno;
-  // OffsetNumber          offnum;
 
 
   Datum                 * elem_values = NULL;
@@ -181,10 +172,9 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
   int                   _indice = 0;
   bool                  * elem_nulls = NULL;
   HeapTuple            config_tuple;
-  // HeapTuple            tuple;
 
 // ---------------
-  Snapshot              _snapshot = NULL; // last snapshot ?
+  Snapshot              _snapshot = NULL; // last snapshot
 
   SysScanDesc           _scandesc;
   ScanKeyData           _entry[1];
