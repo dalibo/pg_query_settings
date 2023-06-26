@@ -198,3 +198,18 @@ WARNING:  value is 1000000000
 ```
 
 And this time, the specific configuration is applied.
+
+Caveats
+--------
+
+Enabling this extension might have a performance impact on OLTP workloads.
+The more entries in the table, the greater the impact. This will be improved
+in future releases.
+
+It is possible to disable it globally by setting the parameter
+`pg_query_settings.enabled` to `false` in the main configuration file,
+and to enable it only for a specific database or user. For example:
+
+```
+ALTER ROLE olap_user SET pg_query_settings.enabled = true;
+```
