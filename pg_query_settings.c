@@ -156,6 +156,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
   bool           rethrow = false;
   int64          id;
   char           *guc_value = NULL;
+  const char     *oldValue;
   char           *guc_name = NULL;
   parameter      *param = NULL;
   uint64          queryid = 0;
@@ -213,7 +214,13 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
           param->name = guc_name;
 
           /* Get and store current value for the parameter. */
-          param->oldValue = GetConfigOption(guc_name, true, false);
+          oldValue = GetConfigOption(guc_name, true, false);                    
+          if (oldValue == NULL)                                                 
+          {                                                                     
+             elog(WARNING, "Parameter %s does not exists", guc_name);            
+             continue;                                                           
+          }
+          param->oldValue = oldValue;
 
           slist_push_head(&paramResetList, &param->node);
 
