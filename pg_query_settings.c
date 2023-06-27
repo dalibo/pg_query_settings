@@ -57,9 +57,6 @@ void _PG_fini(void);
 static bool    enabled = true;
 static bool    debug = false;
 static bool    printQueryId = false;
-static slist_head paramResetList = SLIST_STATIC_INIT(paramResetList);
-
-static int     cmp_tracking = 0;
 static uint64  queryid = 0;
 
 #if PG_VERSION_NUM < 130000
@@ -74,9 +71,17 @@ static const char* pgqs_config ="pgqs_config";
 typedef struct parameter
 {
   char *name;
-  const char *oldValue;
-  slist_node node;
+  char *oldValue;
 } parameter;
+
+/* ParameterList struct */
+typedef struct parameterList
+{
+  int num;
+  parameter * params;
+} parameterList;
+
+static parameterList paramResetList;
 
 /* Our hooks on PostgreSQL */
 static planner_hook_type prevHook  = NULL;
@@ -103,11 +108,11 @@ static void pgqs_post_parse_analyze(ParseState *pstate, Query *query)
 
   if (debug) elog (DEBUG1,"Entering pgqs_post_parse_analyze");
 
-
   if (prev_post_parse_analyze_hook)
     prev_post_parse_analyze_hook(pstate, query);
 
   if (debug) elog (DEBUG1,"setting pgqs_queryString to \"%s\"",pstate->p_sourcetext);
+
   pgqs_queryString = pstrdup(pstate->p_sourcetext);
 
   if (debug) elog (DEBUG1,"Exiting pgqs_post_parse_analyze");
@@ -116,30 +121,21 @@ static void pgqs_post_parse_analyze(ParseState *pstate, Query *query)
 
 #endif //COMPUTE_LOCAL_QUERYID = 1
 
-
 /*
- * Destroy the list of parameters.
+ * Destroy the table of parameters.
  * If 'reset' is true, then restore value of each parameter.
  */
 static void DestroyPRList(bool reset)
 {
-  slist_mutable_iter  iter;
-  parameter   *param;
-
   if (debug) elog(DEBUG1, "Destroy paramResetList");
 
-  slist_foreach_modify(iter, &paramResetList)
-  {
-    param = slist_container(parameter, node, iter.cur);
-
-    if (reset)
-    {
-      if (debug) elog(DEBUG1, "Reset guc %s", param->name);
-
-      SetConfigOption(param->name, param->oldValue, PGC_USERSET, PGC_S_SESSION);
+  if (reset) {
+    for (int i=0; i<paramResetList.num; i++) {
+      if (debug) elog(DEBUG1, "Reset guc %s to %s",
+        paramResetList.params[i].name, paramResetList.params[i].oldValue);
+      SetConfigOption(paramResetList.params[i].name,
+        paramResetList.params[i].oldValue, PGC_USERSET, PGC_S_SESSION);
     }
-    slist_delete_current(&iter);
-    free(param);
   }
 }
 
@@ -159,156 +155,202 @@ execPlantuner(Query *parse, int cursorOptions, ParamListInfo boundp)
 execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListInfo boundp)
 #endif
 {
-  PlannedStmt    *result;
-  Oid            config_relid;
-  bool           rethrow = false;
-  char           *guc_value = NULL;
-  char           *guc_name = NULL;
-  parameter      *param = NULL;
+  PlannedStmt  *result;
+  Oid          config_relid;
+  bool         rethrow = false;
+  char         *guc_value = NULL;
+  char         *guc_name = NULL;
 #if PG_VERSION_NUM < 130000
-        char * query_st;
+  char         *query_st;
 #endif
-  ListCell       *l;
-  int     ret = 0;
-  int64   rows = 0;
-  int     t = 0;
-  char *sql = "SELECT param, value FROM pgqs_config WHERE queryid = $1;";
+  int          ret = 0;
+  int64        rows = 0;
+  int          t = 0;
+  const char   *sql = "SELECT param, value FROM pgqs_config WHERE queryid = $1;";
+  static       SPIPlanPtr plan = NULL;
+
   Oid arg_types[1] = { INT8OID };
   Datum arg_values[1] = { queryid };
-
+  
   if (enabled)
   {
     config_relid = RelnameGetRelid(pgqs_config);
 
     if (OidIsValid(config_relid))
     {
-      foreach(l, parse->rtable)
-      {
-        RangeTblEntry *rte = (RangeTblEntry *) lfirst(l);
-        /* Means that a query contain the pgqs_config table.
-         * Two possible queries :
-         *   - SQL user query,
-         *   - SQL query called by extension itself (via SPI).
-         */
-        if ( config_relid == rte->relid)
-        {
-          cmp_tracking++;
-          break;
-        }
-      }
-      /* Means that the user query doesn't contain the pgqs_config table itself. */
-      if (cmp_tracking == 0)
-      {
-        cmp_tracking++;
 
 #if PG_VERSION_NUM < 130000
-        query_st = pgqs_queryString;
+      query_st = pgqs_queryString;
 
-        if (debug) elog(DEBUG1,"query_st=%s", query_st);
-        if (debug) elog(DEBUG1,"pgqs_queryString=%s", pgqs_queryString);
+      if (debug) elog(DEBUG1,"query_st=%s", query_st);
+      if (debug) elog(DEBUG1,"pgqs_queryString=%s", pgqs_queryString);
 #endif
+
+      if (debug) elog(DEBUG1,"query_st=%s", query_st);
 
 #if COMPUTE_LOCAL_QUERYID
-        queryid = hash_query(query_st);
+      queryid = hash_query(query_st);
 #else
-        queryid = parse->queryId;
+      queryid = parse->queryId;
 #endif
 
-        if (printQueryId) elog(NOTICE, "QueryID is '%li'", queryid);
+      if (printQueryId) elog(NOTICE, "QueryID is '%li'", queryid);
+      if (debug) elog(DEBUG1, "query's QueryID is '%li'", queryid);
 
-        if (debug) elog(DEBUG1, "query's QueryID is '%li'", queryid);
+      arg_values[0] = UInt64GetDatum(queryid);
 
-        arg_values[0] = UInt64GetDatum(queryid);
+      elog(DEBUG1, "context parent: %s", CurrentMemoryContext->parent->name);
 
+      PG_TRY();
+      {
         SPI_connect();
+        elog(DEBUG1, "OK SPI_connect()");
+      }
+      PG_CATCH();
+      {
+        elog(DEBUG1, "ERROR SPI_connect()");
+      }
+      PG_END_TRY();
 
-        ret = SPI_execute_with_args(sql, 1, arg_types, arg_values, NULL, true, 0);
-        if(ret > 0)
+      if (plan == NULL)
+      {
+        plan = SPI_prepare(sql, 1, arg_types);
+        SPI_keepplan(plan);
+      }else{
+        elog(DEBUG1, "PLAN EN CACHE");
+      }
+
+      PG_TRY();
+      {
+        planner_hook = prevHook;
+        ret = SPI_execute_plan(plan, arg_values, NULL, true, 0);
+        elog(DEBUG1, "%s retourne RET %d", sql, ret);
+
+        prevHook = planner_hook;
+        planner_hook = execPlantuner;
+      }
+      PG_CATCH();
+      {
+        elog(DEBUG1, "Problème lors de l'exec de %s", sql);
+      }
+      PG_END_TRY();
+
+      // TODO: remanier pour aller directement au label close (avec
+      // SPI_finish() )
+      if (ret > 0)
+      {
+        rows = SPI_processed;
+        if (SPI_tuptable)
         {
-          rows = SPI_processed;
-          if (SPI_tuptable)
+          char    *buf;
+          const char    *oldValue;
+          TupleDesc       tupdesc = SPI_tuptable->tupdesc;
+          SPITupleTable   *tuptable = SPI_tuptable;
+          parameter	 *param;
+          MemoryContext oldcontext;
+
+          /* Allocation mémoire pour le tableau */
+
+          elog(DEBUG1, "Memory Context Name : %s",CurrentMemoryContext->name);
+
+          paramResetList.params = SPI_palloc(rows * sizeof(parameter));
+          paramResetList.num = 0;
+          param = paramResetList.params;
+
+          for (t = 0; t < rows; t++)
           {
-            char    *buf;
-            TupleDesc       tupdesc = SPI_tuptable->tupdesc;
-            SPITupleTable   *tuptable = SPI_tuptable;
+            HeapTuple   tuple = tuptable->vals[t];
 
-            for (t = 0; t < rows; t++)
+            /* Get the name of the parameter (table field : 'param'). */
+            guc_name = SPI_getvalue(tuple, tupdesc, 1);
+
+            /* Get the value for the parameter (table field : 'value'). */
+            guc_value = SPI_getvalue(tuple, tupdesc, 2);
+
+            oldValue = GetConfigOption(guc_name, true, false);
+            if (oldValue == NULL)
             {
-              HeapTuple   tuple = tuptable->vals[t];
-
-              /* Get the name of the parameter (table field : 'param'). */
-              guc_name = SPI_getvalue(tuple, tupdesc, 1);
-
-              /* Get the value for the parameter (table field : 'value'). */
-              guc_value = SPI_getvalue(tuple, tupdesc, 2);
-
-              param = malloc(sizeof(parameter));
-
-              buf = SPI_palloc(strlen(guc_name) + 1);
-              strcpy(buf, guc_name);
-              guc_name = buf;
-
-              param->name = guc_name;
-
-              /* Get and store current value for the parameter. */
-              param->oldValue = GetConfigOption(guc_name, true, false);
-
-              slist_push_head(&paramResetList, &param->node);
-
-              /*
-               * Here we use the PostgreSQL try/catch mecanism so that when
-               * SetConfigOption() returns an error, the current transaction
-               * is rollbacked and its error message is logged. Such an
-               * error message could be like:
-               * 'ERROR:  unrecognized configuration parameter "Dalibo"'
-               * or like:
-               * 'ERROR:  invalid value for parameter "work_mem": "512KB"'.
-               */
-              PG_TRY();
-              {
-                elog(DEBUG1, "Setting %s = %s", guc_name,guc_value);
-                SetConfigOption(guc_name, guc_value, PGC_USERSET, PGC_S_SESSION);
-              }
-              PG_CATCH();
-              {
-                rethrow = true;
-
-                /* Current transaction will be rollbacked when exception is
-                 * re-thrown, so there's no need to reset the parameters that
-                 * may have successfully been set. Let's just destroy the list.
-                 */
-                cmp_tracking = 0;
-                DestroyPRList(false);
-                SPI_finish();
-                goto close;
-              }
-              PG_END_TRY();
+              elog(WARNING, "parameter %s does not exists", guc_name);
+              continue;
             }
+
+            oldcontext = MemoryContextSwitchTo(PortalContext);
+            // TODO: modif en palloc
+            buf = SPI_palloc(strlen(guc_name) + 1);
+            strcpy(buf, guc_name);
+            guc_name = buf;
+            param->name = guc_name;
+
+            /* Get and store current value for the parameter. */
+
+            // TODO: modif en palloc
+            buf = SPI_palloc(strlen(oldValue) + 1);
+            strcpy(buf, oldValue);
+            param->oldValue = buf;
+
+            paramResetList.num++;
+            param++;
+
+            MemoryContextSwitchTo(oldcontext);
+
+            /*
+             * Here we use the PostgreSQL try/catch mecanism so that when
+             * SetConfigOption() returns an error, the current transaction
+             * is rollbacked and its error message is logged. Such an
+             * error message could be like:
+             * 'ERROR:  unrecognized configuration parameter "Dalibo"'
+             * or like:
+             * 'ERROR:  invalid value for parameter "work_mem": "512KB"'.
+             */
+            PG_TRY();
+            {
+              elog(DEBUG1, "Setting %s = %s", guc_name,guc_value);
+              SetConfigOption(guc_name, guc_value, PGC_USERSET, PGC_S_SESSION);
+            }
+            PG_CATCH();
+            {
+              elog(DEBUG1, "ERROR SetConfigOption");
+              rethrow = true;
+
+              /* Current transaction will be rollbacked when exception is
+               * re-thrown, so there's no need to reset the parameters that
+               * may have successfully been set. Let's just destroy the list.
+               */
+              DestroyPRList(false);
+              // TODO: déplacer SPI_finish() dans le label close
+              SPI_finish();
+              goto close;
+            }
+            PG_END_TRY();
           }
         }
-        SPI_finish();
-close:
-        if (rethrow)
-        {
-          PG_RE_THROW();
-        }
       }
+      // TODO: à déplacer dans le label close
+      PG_TRY();
+      {
+        SPI_finish();
+        elog(DEBUG1, "OK SPI_finish()");
+      }
+      PG_CATCH();
+      {
+        elog(DEBUG1, "ERROR SPI_finish()");
+      }
+      PG_END_TRY();
+close:
+      if (rethrow)
+        PG_RE_THROW();
     }
   }
-
   /*
    * Call next hook if it exists
    */
   if (prevHook)
-
 #if PG_VERSION_NUM < 130000
     result = prevHook(parse, cursorOptions, boundp);
 #else
     result = prevHook(parse, query_st, cursorOptions, boundp);
 #endif
-
   else
-
 #if PG_VERSION_NUM < 130000
     result = standard_planner(parse, cursorOptions, boundp);
 #else
@@ -335,7 +377,6 @@ pgqs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count, bo
   }
   PG_CATCH();
   {
-    cmp_tracking = 0;
     DestroyPRList(false);
     PG_RE_THROW();
   }
@@ -349,24 +390,20 @@ pgqs_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count, bo
 static void
 PlanTuner_ExecutorEnd(QueryDesc *q)
 {
-  cmp_tracking--;
-  if (cmp_tracking == 0)
-  {
+  MemoryContextStats(TopMemoryContext);
+
+  if (planner_hook == execPlantuner)
     DestroyPRList(true);
-  }
 
   PG_TRY();
   {
     if (prev_ExecutorEnd)
-    {
       prev_ExecutorEnd(q);
-    }else{
+    else
       standard_ExecutorEnd(q);
-    }
   }
   PG_CATCH();
   {
-    cmp_tracking = 0;
     DestroyPRList(false);
     PG_RE_THROW();
   }
@@ -471,5 +508,4 @@ _PG_fini(void)
 #endif
 
   if (debug) elog(DEBUG1,"Exiting _PG_fini()");
-
 }
