@@ -23,6 +23,8 @@
 #include <utils/builtins.h>
 #include <utils/guc.h>
 #include <lib/ilist.h>
+#include <access/genam.h>
+#include <utils/fmgroids.h>
 
 /* This is a module :) */
 
@@ -150,7 +152,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
   Relation       config_rel;
   HeapTuple      config_tuple;
   Oid            config_relid;
-  TableScanDesc  config_scan;
+  SysScanDesc    scandesc;
   Datum          data;
   bool           isnull;
   bool           rethrow = false;
@@ -159,6 +161,11 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
   char           *guc_name = NULL;
   parameter      *param = NULL;
   uint64          queryid = 0;
+  ScanKeyData     entry[1];
+  List           *pgqs_index_list = NULL;
+  Oid             pgqs_first_indexOid = 0;
+  ListCell       *pgqs_first_index = NULL;
+
 
   if (enabled)
   {
@@ -187,9 +194,29 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
 
       config_rel = table_open(config_relid, AccessShareLock);
 
-      config_scan = table_beginscan(config_rel, GetActiveSnapshot(), 0, NULL);
+      // Get the indexes list of our relation
+      pgqs_index_list = RelationGetIndexList(config_rel);
+      if (!pgqs_index_list)
+      {
+        elog(ERROR, "cannot find an index on table \"%s\"", pgqs_config);
+      }
 
-      while ((config_tuple = heap_getnext(config_scan, ForwardScanDirection)) != NULL)
+      // Get the first and /should be/ last index of our relation
+      pgqs_first_index = list_head(pgqs_index_list);
+      pgqs_first_indexOid = lfirst_oid(pgqs_first_index);
+
+      // we dont need this list anymore
+      pfree(pgqs_index_list);
+
+      if (!OidIsValid(pgqs_first_indexOid))
+      {
+        elog(ERROR, "index OID %d is not valid", pgqs_first_indexOid);
+      }
+
+      ScanKeyInit(&entry[0], 1, BTEqualStrategyNumber, F_INT8EQ, Int64GetDatum(queryid));
+      scandesc = systable_beginscan(config_rel, pgqs_first_indexOid, true, NULL, 1, entry);
+
+      while ((config_tuple = systable_getnext(scandesc)) != NULL)
       {
         /* Get the queryid in the currently read tuple. */
         data = heap_getattr(config_tuple, 1, config_rel->rd_att, &isnull);
@@ -247,7 +274,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       }
 
 close:
-      table_endscan(config_scan);
+      systable_endscan(scandesc);
       table_close(config_rel, AccessShareLock);
       if (rethrow)
       {
