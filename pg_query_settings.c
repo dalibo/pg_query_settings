@@ -180,7 +180,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
   ScanKeyData           _entry[1];
 // ---------------
 
-  if (debug) elog(DEBUG1, "0 Entering execPlanTuner");
+  if (debug) elog(DEBUG1, "entering execPlanTuner");
 
 
   if (enabled)
@@ -188,15 +188,15 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
     // getting the oid of our relation
     config_relid = RelnameGetRelid(pgqs_config);
 
-    if (debug) elog(DEBUG1, "1 opening table relation : %i", config_relid);
-
-    // opening the relation
-    config_rel = table_open(config_relid, AccessShareLock);
-
-    if (debug && config_rel) elog(DEBUG1, "relation opened: %i", config_relid);
-
     if (OidIsValid(config_relid))
     {
+
+      if (debug) elog(DEBUG1, "opening table relation : %i", config_relid);
+      // opening the relation
+      config_rel = table_open(config_relid, AccessShareLock);
+
+      if (debug && config_rel) elog(DEBUG1, "relation opened: %i", config_relid);
+
 
       // set query_st regarding the pg version
 #if PG_VERSION_NUM < 130000
@@ -208,11 +208,11 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       if (debug) elog(DEBUG1,"query_st=%s", query_st);
       if (debug) elog(DEBUG1,"pgqs_queryString=%s", pgqs_queryString);
 #endif
-    // Compute or not the queryid
+      // Compute or not the queryid
 #if COMPUTE_LOCAL_QUERYID
-    queryid = hash_query(query_st);
+      queryid = hash_query(query_st);
 #else
-    queryid = parse->queryId;
+      queryid = parse->queryId;
 #endif
 
       if (printQueryId) elog(NOTICE, "QueryID is '%li'", queryid);
@@ -240,7 +240,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
       // we dont need this list anymore
       pfree(pgqs_index_list);
 
-      if (debug) elog(DEBUG1, "Initialising the scan F_INT8EQ");
+      if (debug) elog(DEBUG1, "Initialising the scan");
 
       // ScanKeyInit(&_entry[0], 1, BTEqualStrategyNumber, F_OIDEQ, Int64GetDatum(queryid));
       // ScanKeyInit(&_entry[0], 1, BTEqualStrategyNumber, F_INT4EQ, Int64GetDatum(queryid));
@@ -329,6 +329,7 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
              * re-thrown, so there's no need to reset the parameters that
              * may have successfully been set. Let's just destroy the list.
              */
+
             DestroyPRList(false);
             goto close;
           }
@@ -355,7 +356,11 @@ close:
       PG_RE_THROW();
     }
   }
-}
+    else {
+      // Cant open pgqs_config
+      elog(ERROR, "Can't open %s", pgqs_config);
+    }
+  }
 
 
 
