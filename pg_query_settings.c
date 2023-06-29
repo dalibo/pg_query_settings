@@ -65,7 +65,7 @@ static const char* pgqs_config ="pgqs_config";
 typedef struct parameter
 {
   char *name;
-  const char *oldValue;
+  char *oldValue;
   slist_node node;
 } parameter;
 
@@ -210,10 +210,10 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
           guc_value = pstrdup(TextDatumGetCString(data));
 
           param = malloc(sizeof(parameter));
-          param->name = guc_name;
+          param->name = pstrdup(guc_name);
 
           /* Get and store current value for the parameter. */
-          param->oldValue = GetConfigOption(guc_name, true, false);
+          param->oldValue = pstrdup(GetConfigOption(guc_name, true, false));
 
           slist_push_head(&paramResetList, &param->node);
 
