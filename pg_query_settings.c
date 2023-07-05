@@ -18,6 +18,13 @@
 #include <catalog/namespace.h>
 #include <miscadmin.h>
 #include <executor/executor.h>
+
+#if (PG_VERSION_NUM >= 140000) && (PG_VERSION_NUM < 160000)
+#include <utils/queryjumble.h>
+#elif (PG_VERSION_NUM >= 160000)
+#include <nodes/queryjumble.h>
+#endif
+
 #include <optimizer/planner.h>
 #include <storage/bufmgr.h>
 #include <utils/builtins.h>
@@ -356,6 +363,11 @@ _PG_init(void)
   EmitWarningsOnPlaceholders("pg_query_settings");
 #else
   MarkGUCPrefixReserved("pg_query_settings");
+#endif
+
+#if PG_VERSION_NUM >= 140000
+  /* Inform core that we require a query identifier to be computed */
+  EnableQueryId();
 #endif
 
   if (debug) elog(DEBUG1,"Entering _PG_init()");

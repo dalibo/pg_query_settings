@@ -57,6 +57,13 @@ The extension can be disabled with the `pg_query_settings.enabled` parameter.
 More informations on pg_query_settings
 --------------------------------------
 
+Load the library :
+
+```
+postgres=# LOAD 'pg_query_settings';
+LOAD
+```
+
 Create the extension:
 
 ```
@@ -72,14 +79,6 @@ CREATE TABLE
 postgres=# INSERT INTO toto SELECT i, 'Ligne '||i FROM generate_series(1, 10000000) i;
 INSERT 0 10000000
 ```
-
-In order to retrieve the query id, you'll probably need to enable the
-`compute_query_id` parameter in the same session :
-
-```
-postgres=# SET compute_query_id TO on;
-SET
-```                                                                   
 
 We run a query that uses a sort :
 
@@ -145,36 +144,6 @@ INSERT 0 1
 ```
 
 We execute the query :
-
-```
-postgres=# EXPLAIN (COSTS OFF, ANALYZE, SETTINGS, VERBOSE) SELECT * FROM toto ORDER BY c2;
-┌────────────────────────────────────────────────────────────────────────────────────┐
-│                                     QUERY PLAN                                     │
-├────────────────────────────────────────────────────────────────────────────────────┤
-│ Sort (actual time=29046.787..41640.526 rows=10000000 loops=1)                      │
-│   Output: c1, c2                                                                   │
-│   Sort Key: toto.c2                                                                │
-│   Sort Method: external merge  Disk: 272920kB                                      │
-│   ->  Seq Scan on public.toto (actual time=0.035..12971.535 rows=10000000 loops=1) │
-│         Output: c1, c2                                                             │
-│ Settings: random_page_cost = '1.1'                                                 │
-│ Query Identifier: 2507635424379213761                                              │
-│ Planning Time: 0.162 ms                                                            │
-│ Execution Time: 53110.755 ms                                                       │
-└────────────────────────────────────────────────────────────────────────────────────┘
-(10 rows)
-```
-
-Our configuration is not applied. That's OK, the library isn't loaded.
-
-We load the library :
-
-```
-postgres=# LOAD 'pg_query_settings';
-LOAD
-```
-
-We execute the query again:
 
 ```
 postgres=# EXPLAIN (COSTS OFF, ANALYZE, SETTINGS, VERBOSE) SELECT * FROM toto ORDER BY c2;
