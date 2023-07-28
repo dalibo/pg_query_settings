@@ -51,7 +51,6 @@ PG_MODULE_MAGIC;
 /* Function definitions */
 
 void _PG_init(void);
-void _PG_fini(void);
 
 /* Variables */
 
@@ -391,25 +390,4 @@ _PG_init(void)
 #endif
 
   if (debug) elog(DEBUG1,"Exiting _PG_init()");
-}
-
-/*
- * Reset hooks
- */
-void
-_PG_fini(void)
-{
-
-  if (debug) elog(DEBUG1,"Entering _PG_fini()");
-
-  planner_hook = prevHook;
-  ExecutorEnd_hook = prev_ExecutorEnd;
-
-#if PG_VERSION_NUM < 130000
-  if (debug) elog(DEBUG1,"Recovering post_parse_analyze_hook");
-  post_parse_analyze_hook = prev_post_parse_analyze_hook;
-#endif
-
-  if (debug) elog(DEBUG1,"Exiting _PG_fini()");
-
 }
