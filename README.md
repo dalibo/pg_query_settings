@@ -171,6 +171,9 @@ And this time, the specific configuration is applied.
 Caveats
 --------
 
+`pg_query_settings` doesn't work well with **prepared queries**. These are
+considered as not supported yet. This will be fixed in future releases.
+
 Enabling this extension might have a performance impact on any workloads
 with a high number of fast queries, as it slighlty increases the time taken
 to compute the query plan. The more entries in the table, the greater the

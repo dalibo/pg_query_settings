@@ -298,6 +298,16 @@ close:
 static void
 PlanTuner_ExecutorEnd(QueryDesc *q)
 {
+  /* FIXME: here, we restore the value of each parameter, but that's a problem
+   * for prepared queries. More specifically:
+   * for a given parameter `P`, if the generic plan is selected, and if the executor
+   * needs to fetch the value of `P`, then it won't get the value specified in the
+   * `pgqs_config` table.
+   * For example, the executor fetches the value of `work_mem`
+   * in order to decide whether to perform an in-memory sort, but at this point the
+   * value would have been reset to its default (at the end of the PREPARE statement).
+   * However, there's no problem with parameters that only affect planification, such
+   * as max_parallel_workers_per_gather. */
   DestroyPRList(true);
 
   if (prev_ExecutorEnd)
