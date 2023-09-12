@@ -1,0 +1,20 @@
+Source: pg-query-settings
+Section: database
+Priority: optional
+Maintainer: XXX
+Uploaders: XXX
+Standards-Version: XXX
+Build-Depends: XXX
+Homepage: https://github.com/dalibo/pg_query_settings
+Vcs-Browser: https://github.com/dalibo/pg_query_settings
+Vcs-Git: https://github.com/dalibo/pg_query_settings.git
+
+Package: postgresql-15-pg-query-settings
+Architecture: any
+Depends: ${misc:Depends}, ${shlibs:Depends}, postgresql-15
+Description: PostgreSQL module that dynamically set queries' parameters.
+ For every query executed, this module will read a configuration table searching
+ for its queryid. For each line with this queryid, the second column indicates
+ the parameter name and the third column indicates the parameter value. These
+ configurations are applied to the running query, and the parameters are
+ restored to their previous values after the end of the execution.
