@@ -22,6 +22,7 @@
 #include <executor/executor.h>
 #include <optimizer/planner.h>
 #include <storage/bufmgr.h>
+#include "storage/ipc.h"
 #include <storage/predicate.h>
 #include <utils/builtins.h>
 #include <utils/guc.h>
@@ -65,7 +66,10 @@ static char * pgqs_queryString = NULL;
 
 /* Constants */
 /* Name of our config table */
-static const char* pgqs_config ="pgqs_config";
+static const char* pgqs_config = "pgqs_config";
+
+#define PGQS_MAXPARAMNAMELENGTH   39
+#define PGQS_MAXPARAMVALUELENGTH  10
 
 /* Parameter struct */
 typedef struct parameter
@@ -78,13 +82,111 @@ typedef struct parameter
 static planner_hook_type prevHook  = NULL;
 static ExecutorEnd_hook_type prev_ExecutorEnd = NULL;
 
+/*
+hooks needed to initialize and modify the hashtable in shmem
+*/
+static shmem_request_hook_type prev_shmem_request_hook = NULL;
+static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
+
+
+
+PG_FUNCTION_INFO_V1(pg_query_settings_reload);
+
+static void pgqs_shmem_request_hook(void);
+static void pgqs_shmem_startup_hook(void);
+static Size pgqs_memsize(void);
+
 #if COMPUTE_LOCAL_QUERYID
 static post_parse_analyze_hook_type prev_post_parse_analyze_hook = NULL;
 static void pgqs_post_parse_analyze(ParseState *pstate, Query *query);
 #endif
 
+
+/*
+Define our HashKey structure
+*/
+typedef struct pgqsHashKey
+{
+    uint64 queryid;
+} pgqsHashKey;
+
+/*
+Define our settings
+*/
+
+typedef struct pgqsSettings
+{
+  /* FIXME*/
+  char name[PGQS_MAXPARAMNAMELENGTH];
+  char value[PGQS_MAXPARAMVALUELENGTH];
+} pgqsSettings;
+
+/*
+Define our entries structure
+*/
+typedef struct pgqsEntry
+{
+  pgqsHashKey key; /* hash key of the entry, must be first */
+  pgqsSettings settings; /* the settings for this hashkey */
+  slock_t mutex;  /* protects from modification while reading */
+} pgqsEntry;
+
+/*
+Shared State
+*/
+typedef struct pgqsSharedState
+{
+  LWLock *lock; /* protects hashtable search/modificartion */
+  /* do we need more ? */
+} pgqsSharedState;
+
+/* links to shared memory state */
+static pgqsSharedState *pgqs = NULL;
+static HTAB *pgqs_hash = NULL;
+
 // -----------------------------------------------------------------
 /* Functions */
+
+void pgqs_shmem_request_hook(void){
+  if (debug) elog(DEBUG1,"Entering shmem_request_hook");
+
+  if (prev_shmem_request_hook)
+		prev_shmem_request_hook();
+
+	RequestAddinShmemSpace(pgqs_memsize());
+	RequestNamedLWLockTranche("pg_query_settings", 1);
+
+};
+
+void pgqs_shmem_startup_hook(void){
+  if (debug) elog(DEBUG1,"Entering shmem_startup_hook");
+
+
+};
+
+
+/*
+ * Estimate shared memory space needed.
+ */
+static Size
+pgqs_memsize(void)
+{
+	Size		size;
+
+	size = MAXALIGN(sizeof(pgqsSharedState));
+
+/* FIXME : 1000 == max number  of queryid stored */
+	size = add_size(size, hash_estimate_size(1000, sizeof(pgqsEntry)));
+
+
+	return size;
+}
+
+
+
+
+
+
 
 #if COMPUTE_LOCAL_QUERYID
 
@@ -459,6 +561,14 @@ _PG_init(void)
 
   if (debug) elog(DEBUG1,"Entering _PG_init()");
 
+/*
+
+*/
+  prev_shmem_request_hook   = shmem_request_hook;
+  shmem_request_hook        = pgqs_shmem_request_hook;
+  prev_shmem_startup_hook   = shmem_startup_hook;
+  shmem_startup_hook        = pgqs_shmem_startup_hook;
+
   /* Set our two hooks */
   if (planner_hook != execPlantuner)
   {
@@ -479,6 +589,18 @@ _PG_init(void)
 
   if (debug) elog(DEBUG1,"Exiting _PG_init()");
 }
+
+/*
+ * Reload hastable from table to shmem
+ */
+Datum
+pg_query_settings_reload(PG_FUNCTION_ARGS)
+{
+  if (debug) elog (DEBUG1,"Reload");
+	PG_RETURN_VOID();
+}
+
+
 
 /*
  * Reset hooks
