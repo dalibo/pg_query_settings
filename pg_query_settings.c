@@ -68,6 +68,9 @@ static char * pgqs_queryString = NULL;
 /* Name of our config table */
 static const char* pgqs_config = "pgqs_config";
 
+/*
+Max length of a param name or a param value string
+*/
 #define PGQS_MAXPARAMNAMELENGTH   39
 #define PGQS_MAXPARAMVALUELENGTH  10
 
@@ -111,14 +114,15 @@ typedef struct pgqsHashKey
 } pgqsHashKey;
 
 /*
-Define our settings
+Define our settings : for each queryid we have a linked list
+of params, value.
 */
-
 typedef struct pgqsSettings
 {
   /* FIXME*/
   char name[PGQS_MAXPARAMNAMELENGTH];
   char value[PGQS_MAXPARAMVALUELENGTH];
+  struct pgqsSettings * next_param;
 } pgqsSettings;
 
 /*
@@ -136,7 +140,7 @@ Shared State
 */
 typedef struct pgqsSharedState
 {
-  LWLock *lock; /* protects hashtable search/modificartion */
+  LWLock *lock; /* protects hashtable search/modification */
   /* do we need more ? */
 } pgqsSharedState;
 
@@ -166,7 +170,8 @@ void pgqs_shmem_startup_hook(void){
 
 
 /*
- * Estimate shared memory space needed.
+ * Estimate shared memory space needed by pgqs
+ * SharedState + Hashtable.
  */
 static Size
 pgqs_memsize(void)
@@ -175,10 +180,10 @@ pgqs_memsize(void)
 
 	size = MAXALIGN(sizeof(pgqsSharedState));
 
-/* FIXME : 1000 == max number  of queryid stored */
-	size = add_size(size, hash_estimate_size(1000, sizeof(pgqsEntry)));
-
-
+/* FIXME : 100 == max number  of queryid stored */
+	size = add_size(size, hash_estimate_size(100, sizeof(pgqsEntry)));
+/* FIXME : how to evaluate when we use a linked list ? */
+/* size = add_size(size, hash_estimate_size(...)) */
 	return size;
 }
 
@@ -597,6 +602,13 @@ Datum
 pg_query_settings_reload(PG_FUNCTION_ARGS)
 {
   if (debug) elog (DEBUG1,"Reload");
+
+/* FIXME:
+Here we must reload the table pgqs_config and store it into the shmem
+*/
+
+
+
 	PG_RETURN_VOID();
 }
 
