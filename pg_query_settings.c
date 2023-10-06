@@ -26,6 +26,7 @@
 #include <storage/predicate.h>
 #include <utils/builtins.h>
 #include <utils/guc.h>
+#include <utils/queryjumble.h>
 #include <lib/ilist.h>
 #include <access/genam.h>
 #include <utils/fmgroids.h>
@@ -162,6 +163,10 @@ void pgqs_shmem_request_hook(void){
 
 };
 
+/*
+ * Here we allocate somme shared memory for the hash table
+ * and it's entries during the shmem srtatup hook.
+ */
 void pgqs_shmem_startup_hook(void){
   if (debug) elog(DEBUG1,"Entering shmem_startup_hook");
 
@@ -519,6 +524,19 @@ PlanTuner_ExecutorEnd(QueryDesc *q)
 void
 _PG_init(void)
 {
+
+
+  if (debug) elog(DEBUG1,"Entering _PG_init()");
+
+  if (!process_shared_preload_libraries_in_progress)
+    return;
+
+  /*
+   * Inform the postmaster that we want to enable query_id calculation if
+   * compute_query_id is set to auto.
+   */
+  EnableQueryId();
+
   /* Create a GUC variable named pg_query_settings.enabled
    * used to enable or disable this module. */
   DefineCustomBoolVariable(
@@ -604,7 +622,8 @@ pg_query_settings_reload(PG_FUNCTION_ARGS)
   if (debug) elog (DEBUG1,"Reload");
 
 /* FIXME:
-Here we must reload the table pgqs_config and store it into the shmem
+ * Here we must reload the table pgqs_config and store it into the shmem
+ * hastable from scratch, after a locking exclusively
 */
 
 
