@@ -4,7 +4,7 @@
  *		Modify one or more GUC parameters on the fly for some queries, based on their query ID.
  *
  *
- * Copyright (c) 2022-2023, Dalibo (Franck Boudehen, Frédéric Yhuel, Guillaume Lelarge, Thibaud Walkowiak)
+ * Copyright (c) 2022-2024, Dalibo (Franck Boudehen, Frédéric Yhuel, Guillaume Lelarge, Thibaud Walkowiak)
  *
  *-------------------------------------------------------------------------------------------------
  */
