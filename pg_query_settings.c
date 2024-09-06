@@ -26,7 +26,7 @@
 #include <storage/predicate.h>
 #include <utils/builtins.h>
 #include <utils/guc.h>
-#include <utils/queryjumble.h>
+// #include <utils/queryjumble.h>
 #include <lib/ilist.h>
 #include <access/genam.h>
 #include <utils/fmgroids.h>
@@ -54,10 +54,11 @@ PG_MODULE_MAGIC;
 void _PG_init(void);
 void _PG_fini(void);
 
+PG_FUNCTION_INFO_V1(pg_query_settings_reload);
 /* Variables */
 
 static bool    enabled = true;
-static bool    debug = false;
+static bool    debug = true;
 static bool    printQueryId = false;
 static slist_head paramResetList = SLIST_STATIC_INIT(paramResetList);
 
@@ -67,13 +68,59 @@ static char * pgqs_queryString = NULL;
 
 /* Constants */
 /* Name of our config table */
-static const char* pgqs_config = "pgqs_config";
+const char* pgqs_config = "pgqs_config";
 
 /*
 Max length of a param name or a param value string
 */
 #define PGQS_MAXPARAMNAMELENGTH   39
 #define PGQS_MAXPARAMVALUELENGTH  10
+
+/* the main list */
+static dlist_head QueryIdParamsList = DLIST_STATIC_INIT(QueryIdParamsList);
+
+/* the list of */
+static dlist_head ParamsList = DLIST_STATIC_INIT(ParamsList);
+
+/* a QueryIdParamsList node */
+typedef struct QueryIdParams
+{
+	uint64 qid;
+	dlist_head ParamsList;
+	dlist_node link; //to the next/prev node
+	LWLock * lock;
+}QueryIdParams;
+
+/* a ParamsList node */
+typedef struct Params
+{
+	char *name ;
+	char *value ;
+	char *oldvalue ;
+	dlist_node link; // to the next/prev node
+	LWLock * lock;
+}Params;
+
+/* we need to allocate 4 Tranches in the shared_buffers 
+ * to store our main list, its nodes and the list of params inside 
+ * */
+
+
+
+static MemoryContext QueryIdParamsListCxt = NULL;
+static MemoryContext oldCxt = NULL;
+/*
+Shared State
+*/
+typedef struct pgqsSharedState
+{
+  LWLock *lock; /* protects pgqsSharedState search/modification */
+} pgqsSharedState;
+
+/* links to shared memory state */
+static pgqsSharedState *pgqs = NULL;
+
+
 
 /* Parameter struct */
 typedef struct parameter
@@ -89,22 +136,19 @@ static ExecutorEnd_hook_type prev_ExecutorEnd = NULL;
 /*
 hooks needed to initialize and modify the hashtable in shmem
 */
-static shmem_request_hook_type prev_shmem_request_hook = NULL;
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
+static shmem_request_hook_type prev_shmem_request_hook = NULL;
 
-
-
-PG_FUNCTION_INFO_V1(pg_query_settings_reload);
-
-static void pgqs_shmem_request_hook(void);
 static void pgqs_shmem_startup_hook(void);
-static Size pgqs_memsize(void);
+static void pgqs_shmem_request_hook(void);
 
+static Size pgqs_memsize(void); 
 #if COMPUTE_LOCAL_QUERYID
 static post_parse_analyze_hook_type prev_post_parse_analyze_hook = NULL;
 static void pgqs_post_parse_analyze(ParseState *pstate, Query *query);
 #endif
 
+void pgqs_load_dlist(void);
 
 /*
 Define our HashKey structure
@@ -120,7 +164,6 @@ of params, value.
 */
 typedef struct pgqsSettings
 {
-  /* FIXME*/
   char name[PGQS_MAXPARAMNAMELENGTH];
   char value[PGQS_MAXPARAMVALUELENGTH];
   struct pgqsSettings * next_param;
@@ -136,65 +179,256 @@ typedef struct pgqsEntry
   slock_t mutex;  /* protects from modification while reading */
 } pgqsEntry;
 
-/*
-Shared State
-*/
-typedef struct pgqsSharedState
-{
-  LWLock *lock; /* protects hashtable search/modification */
-  /* do we need more ? */
-} pgqsSharedState;
-
-/* links to shared memory state */
-static pgqsSharedState *pgqs = NULL;
-static HTAB *pgqs_hash = NULL;
 
 // -----------------------------------------------------------------
 /* Functions */
 
-void pgqs_shmem_request_hook(void){
-  if (debug) elog(DEBUG1,"Entering shmem_request_hook");
-
-  if (prev_shmem_request_hook)
-		prev_shmem_request_hook();
-
-	RequestAddinShmemSpace(pgqs_memsize());
-	RequestNamedLWLockTranche("pg_query_settings", 1);
-
-};
-
-/*
- * Here we allocate somme shared memory for the hash table
- * and it's entries during the shmem srtatup hook.
- */
-void pgqs_shmem_startup_hook(void){
-  if (debug) elog(DEBUG1,"Entering shmem_startup_hook");
-
-
-};
-
-
-/*
- * Estimate shared memory space needed by pgqs
- * SharedState + Hashtable.
- */
-static Size
-pgqs_memsize(void)
+static Size pgqs_memsize(void)
 {
-	Size		size;
-
+	Size size;
 	size = MAXALIGN(sizeof(pgqsSharedState));
-
-/* FIXME : 100 == max number  of queryid stored */
-	size = add_size(size, hash_estimate_size(100, sizeof(pgqsEntry)));
-/* FIXME : how to evaluate when we use a linked list ? */
-/* size = add_size(size, hash_estimate_size(...)) */
+	// size = add_size(size, hash_estimate_size(pgss_max, sizeof(pgssEntry)));
 	return size;
 }
 
 
 
+/* scan the pgqs_config table and load a dlist of queryIds having 
+ * a dlist of parameter / value.
+*/
+void pgqs_load_dlist(void)
+{
+	
 
+	// Table pgqs_config
+	Relation            config_rel;
+	Oid                 config_relid = 0;
+	// Index of pgqs_config
+	List                * pgqs_index_list = NULL;
+	ListCell            * pgqs_first_index = NULL;
+	Oid                 pgqs_first_indexOid = 0;
+
+	// For the scan
+	Snapshot            _snapshot = NULL; // last snapshot
+	SysScanDesc         _scandesc;
+	ScanKeyData         _entry[1]; // our entry has 2 fields
+
+
+	int         		num_results = 0;
+	HeapTuple			config_tuple;
+	Datum 				elem_qid;
+	Datum 				elem_gucname;
+	Datum 				elem_gucvalue;
+	bool  				elem_null;
+
+	elog(DEBUG1, "entering pgqs_load_dlist() %i",debug);
+	if (debug) elog(DEBUG1, "^^^^^^^^^^^^^^^^^^^^");
+	// getting the oid of our relation
+	config_relid = RelnameGetRelid(pgqs_config);
+	if (OidIsValid(config_relid))
+	{
+		if (debug) elog(DEBUG1, "opening table relation : %i", config_relid);
+
+		// StartTransactionCommand();
+		// opening the relation
+		config_rel = table_open(config_relid, AccessShareLock);
+
+		if (debug && config_rel) elog(DEBUG1, "relation opened: %i", config_relid);
+		if (debug) elog(DEBUG1, "RelationGetIndexList");
+		// Get the indexes list of our relation
+		pgqs_index_list = RelationGetIndexList(config_rel);
+
+		if (debug && pgqs_index_list) elog(DEBUG1, "pgqs_index_list ok");
+		if (debug) elog(DEBUG1, "Getting the first index from list head");
+
+		// Get the first and /should be/ last index of our relation
+		pgqs_first_index = list_head(pgqs_index_list);
+		pgqs_first_indexOid = lfirst_oid(pgqs_first_index);
+
+			if (debug && pgqs_first_indexOid) elog(DEBUG1, "Got this index OID : %i",pgqs_first_indexOid);
+
+
+			// we dont need this list anymore
+			if (debug ) elog(DEBUG1, "freeing pgqs_index_list");
+			pfree(pgqs_index_list);
+
+			if (debug) elog(DEBUG1, "Initialising the scan");
+
+			// ScanKeyInit(&_entry[0], 1, BTEqualStrategyNumber, F_INT8EQ, Int64GetDatum(queryid));
+			ScanKeyInit(&_entry[0], 1, BTEqualStrategyNumber, F_INT8EQ, Int64GetDatum(0));
+
+			if (debug) elog(DEBUG1, "Starting the index scan");
+			_scandesc = systable_beginscan( config_rel, pgqs_first_indexOid,
+								  			true, _snapshot, 1, _entry);
+
+			if (debug && _scandesc != NULL) elog(DEBUG1, "Index scan started");
+
+			if (debug) elog(DEBUG1, "Getting the first tuple");
+
+			while ((config_tuple = systable_getnext(_scandesc)) != NULL)
+			{
+				if (debug) elog(DEBUG1, "--------------------");
+				if (debug) elog(DEBUG1, "Tuple #%i", num_results);
+
+				if (debug) elog(DEBUG1, "Getting field 1");
+				elem_qid = heap_getattr(config_tuple, 1, config_rel->rd_att, &elem_null);
+				if (debug) elog(DEBUG1, "queryid=%li",elem_qid);
+
+				if (debug) elog(DEBUG1, "getting guc name");
+				elem_gucname = heap_getattr(config_tuple, 2, config_rel->rd_att, &elem_null);
+				if (debug) elog(DEBUG1, "got guc name:%s",
+					pstrdup(TextDatumGetCString(elem_gucname)));
+
+				if (debug) elog(DEBUG1, "getting guc value");
+				elem_gucvalue =
+					heap_getattr(config_tuple, 3, config_rel->rd_att, &elem_null);
+				if (debug) elog(DEBUG1, "got guc value:%s",
+					pstrdup(TextDatumGetCString(elem_gucvalue)));
+
+
+				num_results++;
+			} // while we have tuples
+
+			if (debug) elog(DEBUG1, "--------------------");
+			if (debug) elog(DEBUG1, "End of the index scan");
+			if (debug) elog(DEBUG1, "numresults=%i",num_results);
+	}
+
+close:
+	if (debug) elog(DEBUG1, "Endscan");
+	systable_endscan(_scandesc);
+
+	if (debug) elog(DEBUG1, "Closing table pgqs_config");
+	table_close(config_rel, AccessShareLock);
+
+	// End transaction ?	
+	// CommitTransactionCommand();                                                                                                                     
+};
+
+void pgqs_shmem_request_hook(void)
+{
+	// if (debug) elog(DEBUG1,"Entering shmem_request_hook");
+	elog(DEBUG1,"Entering pgqs_shmem_request_hook");
+
+  	/* call the previous hook */
+	if (prev_shmem_request_hook)
+		prev_shmem_request_hook();
+
+	/* Request the sharedMem to store our hashTable */
+  	// RequestAddinShmemSpace(pgqs_memsize());
+  	RequestAddinShmemSpace(pgqs_memsize());
+
+	/* Put an exclusive Lock the Tranche 
+	 * only called from a shmem_request_hook */
+
+	RequestNamedLWLockTranche("pg_query_settings", 1);
+
+	elog(DEBUG1,"Exiting shmem_request_hook");
+};
+
+/*
+ * Here we allocate somme shared memory 
+ * and it's entries during the shmem startup hook.
+ */
+static void pgqs_shmem_startup_hook(void)
+{		
+	Relation            config_rel;
+	Oid                 config_relid = 0;
+	List                * pgqs_index_list = NULL;
+	ListCell            * pgqs_first_index = NULL;
+	Oid                 pgqs_first_indexOid = 0;
+
+	Snapshot            _snapshot = NULL; // last snapshot
+	SysScanDesc         _scandesc;
+	ScanKeyData         _entry[1]; // our entry has 2 fields
+
+	int         		num_results = 0;
+	HeapTuple			config_tuple;
+	Datum 				elem_qid;
+	Datum 				elem_gucname;
+	Datum 				elem_gucvalue;
+	bool  				elem_null;
+
+	bool 				found;
+	bool  				lock_ok;
+
+	elog(DEBUG1,"Entering shmem_startup_hook");
+
+	if (prev_shmem_startup_hook)
+		prev_shmem_startup_hook();
+
+	/*
+     * Create or attach to the shared memory state, including hash table
+     */
+
+	elog(DEBUG1,"----------------------------");
+	elog(DEBUG1,"Locking AddinShmemInitLock");
+	
+	lock_ok = LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
+	if (!lock_ok)
+	{
+		goto error;
+	}
+	else
+	{
+		elog(DEBUG1,"AddinShmemInitLock OK");
+	}
+
+	elog(DEBUG1,"ShmemInitStruct");
+	pgqs = ShmemInitStruct("pg_query_settings",
+							   sizeof(pgqsSharedState),
+							   &found);
+	if (!found)
+	{
+		elog(DEBUG1,"Lock the Tranche");
+		// pgqs->lock = &(GetNamedLWLockTranche("pg_query_settings"))->lock;
+		/* Initialisation of pgqs */
+	}
+
+	elog(DEBUG1,"Releasing AddinShmemInitLock");
+	LWLockRelease(AddinShmemInitLock);
+	
+  /* scan the table pgqs_config table
+   * create an hashtable in shmem
+   * fill in the hash table  
+  */
+
+	elog(DEBUG1,"Allocating QueryIdParamsListCxt");
+	QueryIdParamsListCxt = AllocSetContextCreate(
+		TopMemoryContext,
+		"QueryIdParamsListCxt",
+		ALLOCSET_DEFAULT_SIZES
+	);
+	if (QueryIdParamsListCxt) 
+	{
+		elog(DEBUG1,"Switching to QueryIdParamsListCxt");
+		oldCxt = MemoryContextSwitchTo(QueryIdParamsListCxt);
+		{
+		elog(DEBUG1,"Launching pgqs_load_dlist");
+
+		// pgqs_load_dlist();
+        
+		elog(DEBUG1, "^^^^^^^^^^^^^^^^^^^^");
+		// getting the oid of our relation
+		elog(DEBUG1, "Get Relid of %s",pgqs_config);
+		// getting the oid of our relation
+		// config_relid = RelnameGetRelid(pgqs_config);
+
+
+		}
+		elog(DEBUG1,"Switching back to oldCxt");
+		MemoryContextSwitchTo(oldCxt);
+	}
+	else
+	{
+		elog(DEBUG1,"Can't switch to QueryIdParamsListCxt: NULL Cxt");
+	}
+
+	elog(DEBUG1,"----------------------------");
+
+error:
+	if (!lock_ok) elog(DEBUG1, "can't acquire AddinShmemInitLock");
+};
 
 
 
@@ -205,7 +439,8 @@ static void pgqs_post_parse_analyze(ParseState *pstate, Query *query)
  /* here we get the query string and put it in pgqs_queryString.
   */
 
-  if (debug) elog (DEBUG1,"Entering pgqs_post_parse_analyze");
+  // if (debug) elog (DEBUG1,"Entering pgqs_post_parse_analyze");
+  elog (DEBUG1,"Entering pgqs_post_parse_analyze");
 
 
   if (prev_post_parse_analyze_hook)
@@ -217,7 +452,6 @@ static void pgqs_post_parse_analyze(ParseState *pstate, Query *query)
   if (debug) elog (DEBUG1,"Exiting pgqs_post_parse_analyze");
 
 }
-
 #endif //COMPUTE_LOCAL_QUERYID = 1
 
 
@@ -230,7 +464,8 @@ static void DestroyPRList(bool reset)
   slist_mutable_iter  iter;
   parameter   *param;
 
-  if (debug) elog(DEBUG1, "Destroy paramResetList");
+  // if (debug) elog(DEBUG1, "Destroy paramResetList");
+  elog(DEBUG1, "Destroy paramResetList");
 
   slist_foreach_modify(iter, &paramResetList)
   {
@@ -238,7 +473,8 @@ static void DestroyPRList(bool reset)
 
     if (reset)
     {
-      if (debug) elog(DEBUG1, "Reset guc %s", param->name);
+      // if (debug) elog(DEBUG1, "Reset guc %s", param->name);
+      elog(DEBUG1, "Reset guc %s", param->name);
 
       SetConfigOption(param->name, NULL, PGC_USERSET, PGC_S_SESSION);
     }
@@ -292,187 +528,191 @@ execPlantuner(Query *parse, const char *query_st, int cursorOptions, ParamListIn
   ScanKeyData           _entry[1];
 // ---------------
 
-  if (debug) elog(DEBUG1, "entering execPlanTuner");
+	if (debug) elog(DEBUG1, "entering execPlanTuner");
 
 
-  if (enabled)
-  {
-    // getting the oid of our relation
-    config_relid = RelnameGetRelid(pgqs_config);
+	if (enabled)
+	{
+		// getting the oid of our relation
+		config_relid = RelnameGetRelid(pgqs_config);
 
-    if (OidIsValid(config_relid))
-    {
+		if (OidIsValid(config_relid))
+		{
 
-      if (debug) elog(DEBUG1, "opening table relation : %i", config_relid);
-      // opening the relation
-      config_rel = table_open(config_relid, AccessShareLock);
+			if (debug) elog(DEBUG1, "opening table relation : %i", config_relid);
 
-      if (debug && config_rel) elog(DEBUG1, "relation opened: %i", config_relid);
+			// StartTransactionCommand();
+			// opening the relation
+			config_rel = table_open(config_relid, AccessShareLock);
+
+			if (debug && config_rel) elog(DEBUG1, "relation opened: %i", config_relid);
 
 
-      // set query_st regarding the pg version
+			// set query_st regarding the pg version
 #if PG_VERSION_NUM < 130000
-      char * query_st;
+			char * query_st;
 
-      //refactoring needed here
-      query_st = pgqs_queryString;
+			//refactoring needed here
+			query_st = pgqs_queryString;
 
-      if (debug) elog(DEBUG1,"query_st=%s", query_st);
-      if (debug) elog(DEBUG1,"pgqs_queryString=%s", pgqs_queryString);
+			if (debug) elog(DEBUG1,"query_st=%s", query_st);
+			if (debug) elog(DEBUG1,"pgqs_queryString=%s", pgqs_queryString);
 #endif
-      // Compute or not the queryid
+			// Compute or not the queryid
 #if COMPUTE_LOCAL_QUERYID
-      queryid = hash_query(query_st);
+			queryid = hash_query(query_st);
 #else
-      queryid = parse->queryId;
+			queryid = parse->queryId;
 #endif
 
-      if (printQueryId) elog(NOTICE, "QueryID is '%li'", queryid);
-      if (debug) elog(DEBUG1, "query's QueryID is '%li'", queryid);
+			if (printQueryId) elog(NOTICE, "QueryID is '%li'", queryid);
+			if (debug) elog(DEBUG1, "query's QueryID is '%li'", queryid);
 
 
-      if (debug) elog(DEBUG1, "RelationGetIndexList");
+			if (debug) elog(DEBUG1, "RelationGetIndexList");
 
-      // Get the indexes list of our relation
-      pgqs_index_list = RelationGetIndexList(config_rel);
+			// Get the indexes list of our relation
+			pgqs_index_list = RelationGetIndexList(config_rel);
 
-      if (debug && pgqs_index_list) elog(DEBUG1, "pgqs_index_list ok");
+			if (debug && pgqs_index_list) elog(DEBUG1, "pgqs_index_list ok");
 
-      if (debug) elog(DEBUG1, "Getting the first index from list head");
+			if (debug) elog(DEBUG1, "Getting the first index from list head");
 
-      // Get the first and /should be/ last index of our relation
-      pgqs_first_index = list_head(pgqs_index_list);
-      pgqs_first_indexOid = lfirst_oid(pgqs_first_index);
+			// Get the first and /should be/ last index of our relation
+			pgqs_first_index = list_head(pgqs_index_list);
+			pgqs_first_indexOid = lfirst_oid(pgqs_first_index);
 
-      if (debug && pgqs_first_indexOid) elog(DEBUG1, "Got this index OID : %i",pgqs_first_indexOid);
-
-
-      if (debug ) elog(DEBUG1, "freeing pgqs_index_list");
-
-      // we dont need this list anymore
-      pfree(pgqs_index_list);
-
-      if (debug) elog(DEBUG1, "Initialising the scan");
-
-      // ScanKeyInit(&_entry[0], 1, BTEqualStrategyNumber, F_OIDEQ, Int64GetDatum(queryid));
-      // ScanKeyInit(&_entry[0], 1, BTEqualStrategyNumber, F_INT4EQ, Int64GetDatum(queryid));
-      ScanKeyInit(&_entry[0], 1, BTEqualStrategyNumber, F_INT8EQ, Int64GetDatum(queryid));
-
-      if (debug) elog(DEBUG1, "Starting the index scan");
-      _scandesc = systable_beginscan(  config_rel,
-                                       pgqs_first_indexOid,
-                                       true,
-                                       _snapshot,
-                                      1,
-                                      _entry);
-
-      if (debug && _scandesc != NULL) elog(DEBUG1, "Index scan started");
-
-      elem_values = palloc(sizeof(Datum) * 64);
-      elem_gucname = palloc(sizeof(Datum) * 64);
-      elem_gucvalue = palloc(sizeof(Datum) * 64);
-      elem_nulls = palloc(sizeof(bool) * 64);
-
-      if (debug) elog(DEBUG1, "Arrays allocated");
-
-      if (debug) elog(DEBUG1, "Getting the first tuple");
-
-      while ((config_tuple = systable_getnext(_scandesc)) != NULL)
-      {
-        if (debug) elog(DEBUG1, "--------------------");
-        if (debug) elog(DEBUG1, "Tuple #%i", num_results);
-
-        if (debug) elog(DEBUG1, "Getting field 1");
-        elem_values[num_results] =
-          heap_getattr(config_tuple, 1, config_rel->rd_att, &elem_nulls[num_results]);
-        if (debug) elog(DEBUG1, "queryid=%li",elem_values[num_results]);
-
-        if (debug) elog(DEBUG1, "getting guc name");
-        elem_gucname[num_results] =
-          heap_getattr(config_tuple, 2, config_rel->rd_att, &elem_nulls[num_results]);
-        if (debug) elog(DEBUG1, "got guc name:%s",
-          pstrdup(TextDatumGetCString(elem_gucname[num_results])));
-
-        if (debug) elog(DEBUG1, "getting guc value");
-        elem_gucvalue[num_results] =
-          heap_getattr(config_tuple, 3, config_rel->rd_att, &elem_nulls[num_results]);
-        if (debug) elog(DEBUG1, "got guc value:%s",
-          pstrdup(TextDatumGetCString(elem_gucvalue[num_results])));
+			if (debug && pgqs_first_indexOid) elog(DEBUG1, "Got this index OID : %i",pgqs_first_indexOid);
 
 
-        num_results++;
-      } // while we have tuples
-      if (debug) elog(DEBUG1, "--------------------");
-      if (debug) elog(DEBUG1, "End of the index scan");
-      if (debug) elog(DEBUG1, "numresults=%i",num_results);
+			if (debug ) elog(DEBUG1, "freeing pgqs_index_list");
+
+			// we dont need this list anymore
+			pfree(pgqs_index_list);
+
+			if (debug) elog(DEBUG1, "Initialising the scan");
+
+			// ScanKeyInit(&_entry[0], 1, BTEqualStrategyNumber, F_OIDEQ, Int64GetDatum(queryid));
+			// ScanKeyInit(&_entry[0], 1, BTEqualStrategyNumber, F_INT4EQ, Int64GetDatum(queryid));
+			ScanKeyInit(&_entry[0], 1, BTEqualStrategyNumber, F_INT8EQ, Int64GetDatum(queryid));
+
+			if (debug) elog(DEBUG1, "Starting the index scan");
+			_scandesc = systable_beginscan(  config_rel,
+								  pgqs_first_indexOid,
+								  true,
+								  _snapshot,
+								  1,
+								  _entry);
+
+			if (debug && _scandesc != NULL) elog(DEBUG1, "Index scan started");
+
+			elem_values = palloc(sizeof(Datum) * 64);
+			elem_gucname = palloc(sizeof(Datum) * 64);
+			elem_gucvalue = palloc(sizeof(Datum) * 64);
+			elem_nulls = palloc(sizeof(bool) * 64);
+
+			if (debug) elog(DEBUG1, "Arrays allocated");
+
+			if (debug) elog(DEBUG1, "Getting the first tuple");
+
+			while ((config_tuple = systable_getnext(_scandesc)) != NULL)
+			{
+				if (debug) elog(DEBUG1, "--------------------");
+				if (debug) elog(DEBUG1, "Tuple #%i", num_results);
+
+				if (debug) elog(DEBUG1, "Getting field 1");
+				elem_values[num_results] =
+					heap_getattr(config_tuple, 1, config_rel->rd_att, &elem_nulls[num_results]);
+				if (debug) elog(DEBUG1, "queryid=%li",elem_values[num_results]);
+
+				if (debug) elog(DEBUG1, "getting guc name");
+				elem_gucname[num_results] =
+					heap_getattr(config_tuple, 2, config_rel->rd_att, &elem_nulls[num_results]);
+				if (debug) elog(DEBUG1, "got guc name:%s",
+					pstrdup(TextDatumGetCString(elem_gucname[num_results])));
+
+				if (debug) elog(DEBUG1, "getting guc value");
+				elem_gucvalue[num_results] =
+					heap_getattr(config_tuple, 3, config_rel->rd_att, &elem_nulls[num_results]);
+				if (debug) elog(DEBUG1, "got guc value:%s",
+					pstrdup(TextDatumGetCString(elem_gucvalue[num_results])));
 
 
-          /*
-           * Here we use the PostgreSQL try/catch mecanism so that when
-           * SetConfigOption() returns an error, the current transaction
-           * is rollbacked and its error message is logged. Such an
-           * error message could be like:
-           * 'ERROR:  unrecognized configuration parameter "Dalibo"'
-           * or like:
-           * 'ERROR:  invalid value for parameter "work_mem": "512KB"'.
-           */
-          PG_TRY();
-          {
-            // parcours des tableaux
-            for (_indice = 0; _indice < num_results; _indice++){
-              elog(DEBUG1, "Setting %s = %s",
-                pstrdup(TextDatumGetCString(elem_gucname[_indice]) ),
-                pstrdup(TextDatumGetCString(elem_gucvalue[_indice]) )
-              );
-              SetConfigOption(
-                pstrdup(TextDatumGetCString(elem_gucname[_indice])),
-                pstrdup(TextDatumGetCString(elem_gucvalue[_indice])),
-                PGC_USERSET,
-                PGC_S_SESSION
-              );
-            }
-          }
+				num_results++;
+			} // while we have tuples
+			if (debug) elog(DEBUG1, "--------------------");
+			if (debug) elog(DEBUG1, "End of the index scan");
+			if (debug) elog(DEBUG1, "numresults=%i",num_results);
 
-          PG_CATCH();
-          {
-            rethrow = true;
 
-            /* Current transaction will be rollbacked when exception is
-             * re-thrown, so there's no need to reset the parameters that
-             * may have successfully been set. Let's just destroy the list.
-             */
+			/*
+		   * Here we use the PostgreSQL try/catch mecanism so that when
+		   * SetConfigOption() returns an error, the current transaction
+		   * is rollbacked and its error message is logged. Such an
+		   * error message could be like:
+		   * 'ERROR:  unrecognized configuration parameter "Dalibo"'
+		   * or like:
+		   * 'ERROR:  invalid value for parameter "work_mem": "512KB"'.
+		   */
+			PG_TRY();
+			{
+				// parcours des tableaux
+				for (_indice = 0; _indice < num_results; _indice++){
+					elog(DEBUG1, "Setting %s = %s",
+		  				pstrdup(TextDatumGetCString(elem_gucname[_indice]) ),
+		  				pstrdup(TextDatumGetCString(elem_gucvalue[_indice]) )
+		  			);
+					SetConfigOption(
+						pstrdup(TextDatumGetCString(elem_gucname[_indice])),
+						pstrdup(TextDatumGetCString(elem_gucvalue[_indice])),
+						PGC_USERSET,
+						PGC_S_SESSION
+					);
+				}
+			}
 
-            DestroyPRList(false);
-            goto close;
-          }
-          PG_END_TRY();
+			PG_CATCH();
+			{
+				rethrow = true;
 
-close:
-    if (debug) elog(DEBUG1, "Endscan");
-    systable_endscan(_scandesc);
+				/* Current transaction will be rollbacked when exception is
+			 * re-thrown, so there's no need to reset the parameters that
+			 * may have successfully been set. Let's just destroy the list.
+			 */
 
-    if (debug) elog(DEBUG1, "Closing table pgqs_config");
-    table_close(config_rel, AccessShareLock);
+				DestroyPRList(false);
+				goto close;
+			}
+			PG_END_TRY();
 
-    if (debug) elog(DEBUG1, "freeing arrays");
-    pfree(elem_values);
-    if (debug) elog(DEBUG1, "freeing elem_nulls");
-    pfree(elem_nulls);
-    if (debug) elog(DEBUG1, "freeing elem_gucname");
-    pfree(elem_gucname);
-    if (debug) elog(DEBUG1, "freeing elem_gucvalue");
-    pfree(elem_gucvalue);
+		close:
+			if (debug) elog(DEBUG1, "Endscan");
+			systable_endscan(_scandesc);
 
-    if (rethrow)
-    {
-      PG_RE_THROW();
-    }
-  }
-    else {
-      // Cant open pgqs_config
-      elog(ERROR, "Can't open %s", pgqs_config);
-    }
-  }
+			if (debug) elog(DEBUG1, "Closing table pgqs_config");
+			table_close(config_rel, AccessShareLock);
+
+			// End transaction ?
+			// CommitTransactionCommand();                                                                                                                      
+			if (debug) elog(DEBUG1, "freeing arrays");
+			pfree(elem_values);
+			if (debug) elog(DEBUG1, "freeing elem_nulls");
+			pfree(elem_nulls);
+			if (debug) elog(DEBUG1, "freeing elem_gucname");
+			pfree(elem_gucname);
+			if (debug) elog(DEBUG1, "freeing elem_gucvalue");
+			pfree(elem_gucvalue);
+
+			if (rethrow)
+			{
+				PG_RE_THROW();
+			}
+		}
+		else {
+			// Cant open pgqs_config
+			elog(ERROR, "Can't open %s", pgqs_config);
+		}
+	}
 
 
 
@@ -510,6 +750,7 @@ close:
 static void
 PlanTuner_ExecutorEnd(QueryDesc *q)
 {
+  if (debug) elog (DEBUG1,"Entering PlanTuner_ExecutorEnd");
   DestroyPRList(true);
 
   if (prev_ExecutorEnd)
@@ -584,9 +825,6 @@ _PG_init(void)
 
   if (debug) elog(DEBUG1,"Entering _PG_init()");
 
-/*
-
-*/
   prev_shmem_request_hook   = shmem_request_hook;
   shmem_request_hook        = pgqs_shmem_request_hook;
   prev_shmem_startup_hook   = shmem_startup_hook;
@@ -614,21 +852,21 @@ _PG_init(void)
 }
 
 /*
- * Reload hastable from table to shmem
+ * Reload dlist from table to shmem
  */
 Datum
 pg_query_settings_reload(PG_FUNCTION_ARGS)
 {
-  if (debug) elog (DEBUG1,"Reload");
+  if (debug) elog (DEBUG1,"pgqs_config Reload");
 
 /* FIXME:
  * Here we must reload the table pgqs_config and store it into the shmem
- * hastable from scratch, after a locking exclusively
+ * dlist from scratch, after a locking exclusively of the shmem structure.
 */
+	pgqs_load_dlist();
 
-
-
-	PG_RETURN_VOID();
+	PG_RETURN_BOOL(true);
+	// PG_RETURN_VOID();
 }
 
 

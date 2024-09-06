@@ -7,3 +7,7 @@ CREATE TABLE IF NOT EXISTS pgqs_config (queryid BIGINT, param TEXT, value TEXT N
 
 -- mark it as dumpable
 SELECT pg_catalog.pg_extension_config_dump('pgqs_config','');
+  
+CREATE FUNCTION pg_query_settings_reload()
+RETURNS  boolean AS 'MODULE_PATHNAME'
+LANGUAGE C;        
